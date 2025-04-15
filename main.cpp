@@ -137,7 +137,6 @@ int main() {
 
 
 /*
-using namespace std::chrono;
 
 // Configuração dos pinos para o LCD (ajuste conforme sua fiação)
 TextLCD lcd(PA_0, PA_1, PA_2, PA_3, PA_4, PA_5);   // rs, e, d4, d5, d6, d7
