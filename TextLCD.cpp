@@ -1,27 +1,10 @@
-/* mbed TextLCD Library, for a 4-bit LCD based on HD44780
- * Copyright (c) 2007-2010, sford, http://mbed.org
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
 #include "TextLCD.h"
 #include "mbed.h"
+#include "rtos/ThisThread.h"
+#include <chrono>
+
+using namespace std::chrono;
+using namespace std::chrono_literals;
 
 TextLCD::TextLCD(PinName rs, PinName e, PinName d4, PinName d5,
                  PinName d6, PinName d7, LCDType type) : _rs(rs),
@@ -29,21 +12,22 @@ TextLCD::TextLCD(PinName rs, PinName e, PinName d4, PinName d5,
         _type(type) {
 
     _e  = 1;
-    _rs = 0;            // command mode
+    _rs = 0;            // Modo comando
 
-    wait(0.015);        // Wait 15ms to ensure powered up
+    // Aguarda 15ms para garantir que a alimentação estabilizou
+    ThisThread::sleep_for(15ms);
 
-    // send "Display Settings" 3 times (Only top nibble of 0x30 as we've got 4-bit bus)
-    for (int i=0; i<3; i++) {
+    // Envia "Display Settings" 3 vezes (apenas o nibble superior de 0x30, pois usamos barramento de 4 bits)
+    for (int i = 0; i < 3; i++) {
         writeByte(0x3);
-        wait(0.00164);  // this command takes 1.64ms, so wait for it
+        wait_us(1640);  // Esse comando demora aproximadamente 1.64ms
     }
-    writeByte(0x2);     // 4-bit mode
-    wait(0.000040f);    // most instructions take 40us
+    writeByte(0x2);     // Configura o display para 4-bit mode
+    wait_us(40);        // Aguarda 40us (a maioria dos comandos demora 40us)
 
-    writeCommand(0x28); // Function set 001 BW N F - -
+    writeCommand(0x28); // Função: Configuração do display (001 BW N F - -)
     writeCommand(0x0C);
-    writeCommand(0x6);  // Cursor Direction and Display Shift : 0000 01 CD S (CD 0-left, 1-right S(hift) 0-no, 1-yes
+    writeCommand(0x6);  // Configura o movimento do cursor e shift de display: 0000 01 CD S
     cls();
 }
 
@@ -54,8 +38,8 @@ void TextLCD::character(int column, int row, int c) {
 }
 
 void TextLCD::cls() {
-    writeCommand(0x01); // cls, and set cursor to 0
-    wait(0.00164f);     // This command takes 1.64 ms
+    writeCommand(0x01); // Comando para limpar o display e posicionar o cursor em 0
+    wait_us(1640);      // Comando leva cerca de 1.64ms para ser processado
     locate(0, 0);
 }
 
@@ -90,15 +74,17 @@ int TextLCD::_getc() {
 }
 
 void TextLCD::writeByte(int value) {
+    // Envia primeiro o nibble superior
     _d = value >> 4;
-    wait(0.000040f); // most instructions take 40us
+    wait_us(40); // Aguarda 40us
     _e = 0;
-    wait(0.000040f);
+    wait_us(40);
     _e = 1;
-    _d = value >> 0;
-    wait(0.000040f);
+    // Em seguida, envia o nibble inferior
+    _d = value;  // equivalente a value >> 0
+    wait_us(40);
     _e = 0;
-    wait(0.000040f);  // most instructions take 40us
+    wait_us(40); // Aguarda para garantir a execução do comando
     _e = 1;
 }
 

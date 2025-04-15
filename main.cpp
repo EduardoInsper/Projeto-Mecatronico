@@ -16,7 +16,7 @@ DigitalIn Botao(PC_13);
 
 // Declaração dos fins de curso (limit switches) – 
 // assumindo que a leitura será 0 quando não acionados e 1 quando acionados.
-DigitalIn fimIda(PC_9);
+DigitalIn fimIda(D8);
 DigitalIn fimVolta(PC_8);
 
 // Variáveis globais para controle de posição e sequência
