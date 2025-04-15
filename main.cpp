@@ -16,8 +16,8 @@ DigitalIn Botao(PC_13);
 
 // Declaração dos fins de curso (limit switches) – 
 // assumindo que a leitura será 0 quando não acionados e 1 quando acionados.
-DigitalIn fimIda(D8); //mudar pinos
-DigitalIn fimVolta(D8); //mudar pinos
+DigitalIn fimIda(PC_9); //mudar pinos
+DigitalIn fimVolta(PC_8); //mudar pinos
 
 // Variáveis globais para controle de posição e sequência
 int seqAtual = 0;       // Estado atual da sequência de acionamento
