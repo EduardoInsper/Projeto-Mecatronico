@@ -1,5 +1,7 @@
 #include "mbed.h"
 #include <chrono>
+#include "TextLCD.h"
+#include "rtos/ThisThread.h"  // Necessário para ThisThread::sleep_for
 
 using namespace std::chrono;
 
@@ -113,3 +115,88 @@ int main() {
     }
 }
 
+
+/*
+using namespace std::chrono;
+
+// Configuração dos pinos para o LCD (ajuste conforme sua fiação)
+TextLCD lcd(PA_0, PA_1, PA_2, PA_3, PA_4, PA_5);   // rs, e, d4, d5, d6, d7
+
+// Configuração dos botões (assumindo que os botões acionam nível baixo)
+DigitalIn botaoUp(PB_0);
+DigitalIn botaoDown(PB_1);
+DigitalIn botaoSelect(PB_2);
+
+const int MENU_LENGTH = 3;  // Número de opções do menu
+
+// Vetor com as opções do menu
+const char* opcoes[MENU_LENGTH] = {
+    "Opcao 1",
+    "Opcao 2",
+    "Opcao 3"
+};
+
+int indiceAtual = 0;  // Opção atualmente selecionada
+
+int main() {
+    // Configura os botões com resistor pull-up
+    botaoUp.mode(PullUp);
+    botaoDown.mode(PullUp);
+    botaoSelect.mode(PullUp);
+    
+    while (true) {
+        lcd.cls();  // Limpa o display
+        
+        // Define qual conjunto de opções será exibido para manter 2 linhas
+        int linhaInicio = (indiceAtual == MENU_LENGTH - 1) ? indiceAtual - 1 : indiceAtual;
+        int linhaSeguinte = linhaInicio + 1;
+        if(linhaSeguinte >= MENU_LENGTH)
+            linhaSeguinte = linhaInicio;
+        
+        // Exibe a primeira linha
+        lcd.locate(0, 0);
+        if(linhaInicio == indiceAtual)
+            lcd.printf("> ");
+        else
+            lcd.printf("  ");
+        lcd.printf("%-14s", opcoes[linhaInicio]);
+        
+        // Exibe a segunda linha
+        lcd.locate(0, 1);
+        if(linhaSeguinte == indiceAtual)
+            lcd.printf("> ");
+        else
+            lcd.printf("  ");
+        lcd.printf("%-14s", opcoes[linhaSeguinte]);
+        
+        // Verifica o botão UP (navega para opção anterior)
+        if (!botaoUp) {
+            indiceAtual--;
+            if (indiceAtual < 0) {
+                indiceAtual = MENU_LENGTH - 1;  // Se ultrapassar o início, vai para o final
+            }
+            ThisThread::sleep_for(milliseconds(200));  // Delay para debouncing
+        }
+        
+        // Verifica o botão DOWN (navega para a próxima opção)
+        if (!botaoDown) {
+            indiceAtual++;
+            if (indiceAtual >= MENU_LENGTH) {
+                indiceAtual = 0;  // Se ultrapassar o final, volta ao início
+            }
+            ThisThread::sleep_for(milliseconds(200));
+        }
+        
+        // Verifica o botão SELECT (seleciona a opção atual)
+        if (!botaoSelect) {
+            lcd.cls();
+            lcd.printf("Selecionado:");
+            lcd.locate(0, 1);
+            lcd.printf("%s", opcoes[indiceAtual]);
+            ThisThread::sleep_for(milliseconds(2000));  // Exibe a confirmação por 2 segundos
+        }
+        
+        ThisThread::sleep_for(milliseconds(100));  // Pequeno atraso para estabilizar a leitura dos botões
+    }
+}
+*/
