@@ -4,7 +4,7 @@
 using namespace std::chrono;
 
 // Define tempo de espera de 5 ms
-#define velo 0.005f  
+#define velo 0.05f  
 
 // Declaração de pinos para controle do motor de passo
 BusOut MP(D5, D4, D3, D2);
