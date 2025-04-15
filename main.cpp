@@ -107,9 +107,9 @@ int main() {
             // o movimento parará ao atingir o máximo permitido.
             moverPassosLimitados(10);
             
-            // Tenta mover 15 passos para a "volta". Se o motor estiver no limite inferior (posição 0),
+            // Tenta mover 10 passos para a "volta". Se o motor estiver no limite inferior (posição 0),
             // nenhum movimento ocorrerá.
-            moverPassosLimitados(-15);
+            moverPassosLimitados(-10);
         }
     }
 }
