@@ -3,70 +3,72 @@
 
 using namespace std::chrono;
 
-// Define tempo de espera de 5 ms
-#define velo 0.005f  
+// Define tempo de espera para cada passo (5 ms)
+#define VEL 5ms  
 
-// Declaração de pinos para controle do motor de passo
+// Declaração dos pinos para controle do motor de passo
 BusOut MP(D5, D4, D3, D2);
 
-// Declaração de pinos para controle do display de 7 segmentos
-DigitalOut a(D6);
-DigitalOut b(D7);
-DigitalOut c(D8);
-DigitalOut d(D9);
-DigitalOut e(D10);
-DigitalOut f(D11);
-DigitalOut g(D12);
-DigitalOut h(D13);
-
-// Controle PWM no pino analógico chamado "Batata"
-PwmOut Batata(A3);
-
-// Entrada digital para o botão conectado no pino PC_13
+// Entrada digital para disparo da rotina de calibração (por exemplo, PC_13)
 DigitalIn Botao(PC_13);
 
-// Frequências das notas desejadas (Hz)
-const float FREQUENCIA_DO   = 264.0f; // dó
-const float FREQUENCIA_MI   = 330.0f; // mi
-const float FREQUENCIA_SOL  = 396.0f; // sol
+// Declaração dos fins de curso (limit switches) – 
+// assumindo que a leitura será 1 quando não acionados e 0 ao serem pressionados.
+DigitalIn fimIda(PC_9);
+DigitalIn fimVolta(PC_8);
 
-// Tempo que cada nota ficará ativa (em segundos)
-const float TEMPO_NOTA = 0.25f;
+// Função que executa um passo da sequência de 4 estados (full-step)
+void darPasso(int seq) {
+    MP = 1 << (seq % 4);
+    ThisThread::sleep_for(VEL);
+}
 
-// Função para tocar uma nota
-void tocarNota(float freq, float duracao) {
-    // Ajusta o período de acordo com a frequência desejada
-    Batata.period(1.0f / freq);
-    // Define 50% de duty cycle
-    Batata.write(0.50f);
-    // Aguarda pelo tempo da nota
-    ThisThread::sleep_for(milliseconds((int)(duracao * 1000.0f)));
-    // Desliga o PWM (buzzer) antes da próxima nota
-    Batata.write(0.0f);
+// Função para mover o motor até detectar o fim de curso
+// Parâmetro 'sentidoDireto': se true, utiliza sequência direta (0,1,2,3);
+// se false, utiliza sequência inversa.
+int moverAteLimite(DigitalIn &fimCurso, bool sentidoDireto) {
+    int passos = 0;
+    int seq = 0;
+    
+    // Enquanto o fim de curso não for acionado (leitura 1 = não acionado)
+    while(fimCurso.read() == 1) {
+        if (sentidoDireto) {
+            darPasso(seq);
+            seq = (seq + 1) % 4;
+        } else {
+            darPasso(seq);
+            seq = (seq - 1);
+            if (seq < 0) {
+                seq = 3;
+            }
+        }
+        passos++;
+    }
+    return passos;
 }
 
 int main() {
-    while (1) {
-        if (Botao == 0) {
-            // 1) Movimento do motor de passo
-            for (int contador = 0; contador <= 50; contador++) {
-                for (int i = 0; i < 4; i++) {
-                    MP = 1 << i;
-                    // Substitui wait(velo) por sleep_for(5ms)
-                    ThisThread::sleep_for(5ms);
-                }
-            }
-
-            // 2) Liga todos os segmentos do display
-            a = b = c = d = e = f = g = h = 1;
-
-            // 3) Toca as 3 notas em sequência (dó, mi, sol)
-            tocarNota(FREQUENCIA_DO,  TEMPO_NOTA); // dó
-            tocarNota(FREQUENCIA_MI,  TEMPO_NOTA); // mi
-            tocarNota(FREQUENCIA_SOL, TEMPO_NOTA); // sol
-
-            // 4) Desliga o display ao final
-            a = b = c = d = e = f = g = h = 0;
+    // Variáveis para armazenar os limites (número de passos) da ida e da volta
+    int posIda = 0;
+    int posVolta = 0;
+    
+    while(1) {
+        // Inicia a rotina de calibração quando o botão for pressionado (assumindo lógica ativa baixa)
+        if (Botao.read() == 0) {
+            // Calibração na ida
+            posIda = moverAteLimite(fimIda, true);
+            
+            // Pequena pausa para estabilização (opcional)
+            ThisThread::sleep_for(100ms);
+            
+            // Calibração na volta
+            posVolta = moverAteLimite(fimVolta, false);
+            
+            // Neste ponto, posIda e posVolta armazenam os números de passos 
+            // correspondentes aos limites da movimentação do eixo.
+            
+            // Aqui você pode implementar a lógica para impedir que o motor ultrapasse
+            // estes limites em movimentos futuros.
         }
     }
 }
