@@ -13,7 +13,7 @@ BusOut MP(D5, D4, D3, D2);
 DigitalIn Botao(PC_13);
 
 // Declaração dos fins de curso (limit switches) – 
-// assumindo que a leitura será 1 quando não acionados e 0 ao serem pressionados.
+// agora assumindo que a leitura será 0 quando não acionados e 1 quando acionados.
 DigitalIn fimIda(PC_9);
 DigitalIn fimVolta(PC_8);
 
@@ -30,7 +30,7 @@ void darPasso(bool sentidoDireto) {
     if (sentidoDireto) {
         seqAtual = (seqAtual + 1) % 4;
     } else {
-        // Equivalente a seqAtual - 1 com wrap-around
+        // Decrementa com wrap-around
         seqAtual = (seqAtual + 3) % 4;
     }
     ThisThread::sleep_for(VEL);
@@ -38,19 +38,18 @@ void darPasso(bool sentidoDireto) {
 
 // Função que executa passos até detectar o acionamento do fim de curso.
 // O parâmetro 'sentidoDireto' determina a direção do movimento.
+// Agora, o laço segue enquanto o fim de curso não estiver acionado (leitura 0).
 int moverAteLimite(DigitalIn &fimCurso, bool sentidoDireto) {
     int passos = 0;
-    // Enquanto o fim de curso não for acionado (leitura 1 = não acionado)
-    while(fimCurso.read() == 1) {
+    while(fimCurso.read() == 0) {  // Enquanto não acionado (0 = não acionado, 1 = acionado)
         darPasso(sentidoDireto);
         passos++;
     }
     return passos;
 }
 
-// NOVA FUNÇÃO:
 // Esta função movimenta o motor um número de passos desejado, mas somente 
-// se a movimentação não ultrapassar os limites previamente calibrados.
+// se a movimentação não ultrapassar os limites calibrados.
 // Se a soma da posição atual com os passos desejados exceder o limite ou for menor que zero,
 // o motor para ao atingir o limite.
 void moverPassosLimitados(int passosDesejados) {
@@ -88,13 +87,13 @@ int main() {
         // Inicia a rotina de calibração quando o botão for pressionado 
         // (assumindo lógica ativa baixa)
         if (Botao.read() == 0) {
-            // Calibração na ida: move até acionar o fim de curso direto
+            // Calibração na ida: move até acionar o fim de curso (leitura passa a ser 1)
             posIda = moverAteLimite(fimIda, true);
             
             // Pequena pausa para estabilização (opcional)
             ThisThread::sleep_for(100ms);
             
-            // Calibração na volta: move até acionar o fim de curso reverso
+            // Calibração na volta: move até acionar o fim de curso (leitura passa a ser 1)
             posVolta = moverAteLimite(fimVolta, false);
             
             // Após a calibração, assume-se que o motor esteja no fim de curso reverso.
@@ -113,3 +112,4 @@ int main() {
         }
     }
 }
+
