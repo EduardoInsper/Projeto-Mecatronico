@@ -5,6 +5,44 @@
 
 using namespace std::chrono;
 
+#define velo 0.05 // Tempo de espera entre passos (em segundos)
+
+BusOut MP(D2, D3, D4, D5);   // Bobinas do motor
+DigitalIn Botao(PC_13);       // Botão com resistor de pull-up
+
+int passo[4] = {
+    0b0001, // Ativa bobina conectada ao pino D2
+    0b0010, // Ativa bobina conectada ao pino D3
+    0b0100, // Ativa bobina conectada ao pino D4
+    0b1000  // Ativa bobina conectada ao pino D5
+};
+
+int main() {
+    while (true) {
+        if (Botao == 0) { // Botão pressionado
+            // Executa 50 ciclos de passos enquanto o botão permanece pressionado
+            for (int contador = 0; contador <= 50; contador++) {
+                for (int i = 0; i < 4; i++) {
+                    if (Botao != 0) {
+                        MP = 0;
+                        break;
+                    }
+                    MP = passo[i];
+                    ThisThread::sleep_for(chrono::milliseconds(static_cast<int>(velo * 1000))); // 50 ms
+                    MP = 0;
+                    ThisThread::sleep_for(chrono::milliseconds(static_cast<int>(velo * 1000))); // 50 ms
+                }
+                if (Botao != 0) break;
+            }
+        } else {
+            MP = 0;
+        }
+    }
+}
+
+
+
+/*
 // Define tempo de espera para cada passo (5 ms)
 #define VEL 5ms  
 
@@ -133,7 +171,7 @@ int main() {
         }
     }
 }
-
+*/
 /*
 
 // Configuração dos pinos para o LCD (ajuste conforme sua fiação)
