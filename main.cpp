@@ -1,32 +1,5 @@
 #include "mbed.h"
 #include <chrono>
-using namespace std::chrono_literals;
-
-#define velo 5ms  // Define tempo de espera de 5 ms
-
-// Declaração de pinos para controle do motor de passo
-BusOut MP(D5, D4, D3, D2);
-
-// Entrada digital para o botão conectado no pino PC_13
-DigitalIn Botao(PC_13);
-
-int main() {
-    while (1) {
-        if (Botao == 0) {
-            // Movimento do motor de passo
-            for (int contador = 0; contador <= 50; contador++) {
-                for (int i = 0; i < 4; i++) {
-                    MP = 1 << i;
-                    ThisThread::sleep_for(velo);
-                }
-            }
-        }
-    }
-}
-
-
-/*#include "mbed.h"
-#include <chrono>
 #include "TextLCD.h"
 #include "rtos/ThisThread.h"  // Necessário para ThisThread::sleep_for
 
@@ -76,7 +49,7 @@ int moverAteLimite(DigitalIn &fimCurso, bool sentidoDireto) {
     return passos;
 }
 
-// Esta função movimenta o motor um número de passos desejado, mas somente 
+// Função que movimenta o motor um número de passos desejado, mas somente 
 // se a movimentação não ultrapassar os limites calibrados.
 void moverPassosLimitados(int passosDesejados) {
     if(passosDesejados > 0) {
@@ -116,7 +89,7 @@ int main() {
             // Calibração "ida": move até acionar o fim de curso do sentido "ida" (fimIda)
             posIda = moverAteLimite(fimIda, true);
             
-            // Pequena pausa para estabilização (opcional)
+            // Pausa para estabilização
             ThisThread::sleep_for(100ms);
             
             // Calibração "volta": move até acionar o fim de curso do sentido "volta" (fimVolta)
@@ -161,8 +134,6 @@ int main() {
     }
 }
 
-
-*/
 /*
 
 // Configuração dos pinos para o LCD (ajuste conforme sua fiação)
