@@ -4,7 +4,37 @@
 #include "rtos/ThisThread.h"  // Necessário para ThisThread::sleep_for
 
 using namespace std::chrono;
+using namespace std::chrono_literals;  // Permite usar "50ms", "100ms", etc.
 
+InterruptIn button(PC_13);      // Botão de usuário
+DigitalOut pipetteControl(PA_5);        // Saída que aciona o relé da pipeta (defina o pino conforme a sua montagem)
+DigitalOut ledIndicator(LED1);          // LED para feedback visual
+
+// Função callback chamada na borda de subida do botão
+void buttonRiseCallback() {
+    // Gera um pulso de 50ms para acionar o relé da pipeta.
+    // Conforme os slides, o relé é acionado com nível lógico "0".
+    pipetteControl = 0;              // Ativa o relé (acionamento)
+    ThisThread::sleep_for(50ms);       // Duração do pulso (50 ms) – ajuste conforme necessário
+    pipetteControl = 1;              // Desativa o relé
+}
+
+int main(void) {
+    // Configuração inicial: sinal de controle em estado inativo (1 = desacionado) e LED apagado
+    pipetteControl = 1;
+    ledIndicator = 0;
+
+    // Configura a interrupção para detectar a borda de subida do botão
+    button.rise(&buttonRiseCallback);
+
+    // Loop principal (fica aguardando interrupções)
+    while (true) {
+        ThisThread::sleep_for(100ms);
+    }
+}
+
+
+/*
 #define velo 0.05 // Tempo de espera entre passos (em segundos)
 
 BusOut MP(D2, D3, D4, D5);   // Bobinas do motor
@@ -41,7 +71,7 @@ int main() {
 }
 
 
-
+*/
 /*
 // Define tempo de espera para cada passo (5 ms)
 #define VEL 5ms  
