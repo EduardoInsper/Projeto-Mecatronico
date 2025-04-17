@@ -77,7 +77,7 @@ int main() {
 // Pinos do LCD (rs, e, d4, d5, d6, d7)
 TextLCD lcd(PA_0, PA_1, PA_2, PA_3, PA_4, PA_5);
 
-// Configuração dos botões (assumindo que acionam nível baixo)
+// Configuração dos botões (acionam nível alto)
 DigitalIn botaoUp(PB_0);
 DigitalIn botaoDown(PB_1);
 DigitalIn botaoSelect(PB_2);
@@ -88,15 +88,15 @@ const char* opcoes[MENU_LENGTH] = {"Referenciamento", "Recipientes in", "Recipie
 int indiceAtual = 0;
 
 int main() {
-    // Habilita resistores pull-up
-    botaoUp.mode(PullUp);
-    botaoDown.mode(PullUp);
-    botaoSelect.mode(PullUp);
+    // Habilita resistores pull-down para leitura ativa em nível alto
+    botaoUp.mode(PullDown);
+    botaoDown.mode(PullDown);
+    botaoSelect.mode(PullDown);
 
     while (true) {
         lcd.cls();  // Limpa o display
 
-        // Define as duas opções a serem exibidas na tela
+        // Define as duas opções a serem exibidas
         int linhaInicio = (indiceAtual == MENU_LENGTH - 1) ? indiceAtual - 1 : indiceAtual;
         int linhaSeguinte = linhaInicio + 1;
         if (linhaSeguinte >= MENU_LENGTH) linhaSeguinte = linhaInicio;
@@ -109,20 +109,20 @@ int main() {
         lcd.locate(0, 1);
         lcd.printf("%s%-14s", (linhaSeguinte == indiceAtual) ? "> " : "  ", opcoes[linhaSeguinte]);
 
-        // Navegação para cima
-        if (!botaoUp) {
+        // Navegação para cima (botão ativo em HIGH)
+        if (botaoUp) {
             indiceAtual = (indiceAtual - 1 + MENU_LENGTH) % MENU_LENGTH;
             ThisThread::sleep_for(200ms);  // Debounce
         }
 
-        // Navegação para baixo
-        if (!botaoDown) {
+        // Navegação para baixo (botão ativo em HIGH)
+        if (botaoDown) {
             indiceAtual = (indiceAtual + 1) % MENU_LENGTH;
             ThisThread::sleep_for(200ms);
         }
 
-        // Seleção da opção
-        if (!botaoSelect) {
+        // Seleção da opção (botão ativo em HIGH)
+        if (botaoSelect) {
             lcd.cls();
             lcd.printf("Selecionado:");
             lcd.locate(0, 1);
