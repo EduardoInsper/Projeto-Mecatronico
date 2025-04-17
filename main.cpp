@@ -1,87 +1,74 @@
 #include "mbed.h"
-#include <chrono>
 #include "TextLCD.h"
-#include "rtos/ThisThread.h"  // Necessário para ThisThread::sleep_for
+#include <chrono>
+#include "rtos/ThisThread.h"
 
 using namespace std::chrono;
-using namespace std::chrono_literals;  // Permite usar "50ms", "100ms", etc.
+using namespace std::chrono_literals;
 
-// rs=D8, e=D9, d4=D4, d5=D5, d6=D6, d7=D7 
-TextLCD lcd(D8, D9, D4, D5, D6, D7); 
+// Pinos I²C (SDA, SCL)
+I2C i2c(D14, D15);
+
+// Endereço I²C do módulo PCF8574
+constexpr int LCD_I2C_ADDR = 0x40;
+
+// Instância do display 20×4 via I²C
+TextLCD_I2C lcd(&i2c, LCD_I2C_ADDR, TextLCD::LCD20x4);
 
 DigitalIn botaoUp(D12);
 DigitalIn botaoDown(D13);
 DigitalIn botaoSelect(A0);
 DigitalIn botaoBack(A1);
 
-// Definição das opções de menu
+const int LCD_ROWS    = 4;
 const int MENU_LENGTH = 4;
-const char* opcoes[MENU_LENGTH] = {"Referenciamento", "Recipientes in", "Recipientes out", "Mover eixos"};
+const char* opcoes[MENU_LENGTH] = {
+    "Referenciamento",
+    "Recipientes in",
+    "Recipientes out",
+    "Mover eixos"
+};
 int indiceAtual = 0;
 
 int main() {
-    // Leitura ativa em nível alto (Pull-Down interno)
+    // Configura pull-down nos botões
     botaoUp.mode(PullDown);
     botaoDown.mode(PullDown);
     botaoSelect.mode(PullDown);
-    botaoBack.mode(PullDown);  // Configura PullDown para Back
+    botaoBack.mode(PullDown);
 
     while (true) {
-        // === exibição do menu principal ===
-        lcd.cls();  // Limpa o display
+        lcd.cls();
 
-        // Define as duas opções a serem exibidas
-        int linhaInicio = (indiceAtual == MENU_LENGTH - 1) ? indiceAtual - 1 : indiceAtual;
-        int linhaSeguinte = linhaInicio + 1;
-        if (linhaSeguinte >= MENU_LENGTH) linhaSeguinte = linhaInicio;
-
-        // Exibe a primeira linha com indicador “>”
-        lcd.locate(0, 0);
-        lcd.printf("%s%-14s", (linhaInicio == indiceAtual) ? "> " : "  ", opcoes[linhaInicio]);
-
-        // Exibe a segunda linha
-        lcd.locate(0, 1);
-        lcd.printf("%s%-14s", (linhaSeguinte == indiceAtual) ? "> " : "  ", opcoes[linhaSeguinte]);
-
-        // Navegação para cima
-        if (botaoUp) {
-            indiceAtual = (indiceAtual - 1 + MENU_LENGTH) % MENU_LENGTH;
-            ThisThread::sleep_for(200ms);  // Debounce
-        }
-
-        // Navegação para baixo
-        if (botaoDown) {
-            indiceAtual = (indiceAtual + 1) % MENU_LENGTH;
-            ThisThread::sleep_for(200ms);
-        }
-
-        // Seleção da opção
-        if (botaoSelect) {
-            // entra na “subtela” de confirmação
-            lcd.cls();
-            lcd.locate(0, 0);
-            lcd.printf("Selecionado:");
-            lcd.locate(0, 1);
-            lcd.printf("%s", opcoes[indiceAtual]);
-
-            // informa que pressione Back para voltar
-            ThisThread::sleep_for(500ms);
-            lcd.cls();
-            lcd.locate(0, 0);
-            lcd.printf("%s", opcoes[indiceAtual]);
-            lcd.locate(0, 1);
-            lcd.printf("< Back");
-
-            // fica aguardando Back
-            while (!botaoBack) {
-                ThisThread::sleep_for(100ms);
+        // Página de 4 linhas com base no índice atual
+        int pageStart = (indiceAtual / LCD_ROWS) * LCD_ROWS;
+        for (int row = 0; row < LCD_ROWS; row++) {
+            int idx = pageStart + row;
+            lcd.locate(0, row);
+            if (idx < MENU_LENGTH) {
+                lcd.printf("%s%-18s",
+                    (idx == indiceAtual) ? "> " : "  ",
+                    opcoes[idx]
+                );
+            } else {
+                lcd.printf("  %-18s", "");  // linha em branco
             }
-            ThisThread::sleep_for(200ms);  // Debounce do Back
+        }
 
-            // ao sair, volta ao menu (continue implicitamente)
+        // Navegação
+        if (botaoUp)    { indiceAtual = (indiceAtual - 1 + MENU_LENGTH) % MENU_LENGTH; ThisThread::sleep_for(200ms); continue; }
+        if (botaoDown)  { indiceAtual = (indiceAtual + 1) % MENU_LENGTH; ThisThread::sleep_for(200ms); continue; }
+
+        // Ação de seleção
+        if (botaoSelect) {
+            lcd.cls();
+            lcd.locate(0, 0); lcd.printf("Selecionado:");
+            lcd.locate(0, 1); lcd.printf("%s", opcoes[indiceAtual]);
+            lcd.locate(0, 3); lcd.printf("< Back");
+            while (!botaoBack) ThisThread::sleep_for(100ms);
+            ThisThread::sleep_for(200ms);
         }
 
         ThisThread::sleep_for(100ms);
     }
 }
-
