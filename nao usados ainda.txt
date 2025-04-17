@@ -1,0 +1,161 @@
+/*
+InterruptIn button(PC_13);      // Botão de usuário
+DigitalOut pipetteControl(PA_5);        // Saída que aciona o relé da pipeta (defina o pino conforme a sua montagem)
+DigitalOut ledIndicator(LED1);          // LED para feedback visual
+
+// Função callback chamada na borda de subida do botão
+void buttonRiseCallback() {
+    // Gera um pulso de 50ms para acionar o relé da pipeta.
+    // Conforme os slides, o relé é acionado com nível lógico "0".
+    pipetteControl = 0;              // Ativa o relé (acionamento)
+    ThisThread::sleep_for(50ms);       // Duração do pulso (50 ms) – ajuste conforme necessário
+    pipetteControl = 1;              // Desativa o relé
+}
+
+int main(void) {
+    // Configuração inicial: sinal de controle em estado inativo (1 = desacionado) e LED apagado
+    pipetteControl = 1;
+    ledIndicator = 0;
+
+    // Configura a interrupção para detectar a borda de subida do botão
+    button.rise(&buttonRiseCallback);
+
+    // Loop principal (fica aguardando interrupções)
+    while (true) {
+        ThisThread::sleep_for(100ms);
+    }
+}
+*/
+
+/*
+#define velo 0.05 // Tempo de espera entre passos (em segundos)
+
+BusOut MP(D2, D3, D4, D5);   // Bobinas do motor
+DigitalIn Botao(PC_13);       // Botão com resistor de pull-up
+
+int passo[4] = {
+    0b0001, // Ativa bobina conectada ao pino D2
+    0b0010, // Ativa bobina conectada ao pino D3
+    0b0100, // Ativa bobina conectada ao pino D4
+    0b1000  // Ativa bobina conectada ao pino D5
+};
+
+int main() {
+    while (true) {
+        if (Botao == 0) { // Botão pressionado
+            // Executa 50 ciclos de passos enquanto o botão permanece pressionado
+            for (int contador = 0; contador <= 50; contador++) {
+                for (int i = 0; i < 4; i++) {
+                    if (Botao != 0) {
+                        MP = 0;
+                        break;
+                    }
+                    MP = passo[i];
+                    ThisThread::sleep_for(chrono::milliseconds(static_cast<int>(velo * 1000))); // 50 ms
+                    MP = 0;
+                    ThisThread::sleep_for(chrono::milliseconds(static_cast<int>(velo * 1000))); // 50 ms
+                }
+                if (Botao != 0) break;
+            }
+        } else {
+            MP = 0;
+        }
+    }
+}
+*/
+
+
+#include "mbed.h"
+
+// !!! Definições de hardware do EIXO X !!!
+BusOut MP_X(D2, D3, D4, D5);             // Bobinas do motor X
+DigitalIn BotaoRef_X(PC_13);             // Botão de referenciamento X
+DigitalIn FimCurso_X(D8);                // Fim de curso X – posição mínima
+DigitalIn FimCursoX_Oposto(D9);          // Fim de curso X – posição máxima
+
+// !!! Constantes de movimento (podem ser compartilhadas entre eixos) !!!
+const float VELO_INICIAL     = 3.f;
+const float VELO_MINIMA      = 2.f;
+const float VELO_DECREMENTO  = 0.1f;
+const int   PASSOS_POR_NIVEL = 50;
+
+// !!! Sequência de passos X (horário/anti-horário) !!!
+const int passosX_horario[4]     = {0b0001, 0b0010, 0b0100, 0b1000};
+const int passosX_antihorario[4] = {0b1000, 0b0100, 0b0010, 0b0001};
+
+// !!! Estado do eixo X !!!
+float veloFrente_X   = VELO_INICIAL;
+float veloTras_X     = VELO_INICIAL;
+int   passosFrente_X = 0;
+int   passosTras_X   = 0;
+
+// ==================================================================================================== //
+// === Funções Genéricas ===
+
+inline void executar_movimento(const int passos[4], float &velocidade, int &contador, BusOut &motor) {
+    for (int i = 0; i < 4; i++) {
+        motor = passos[i];
+        wait_ms((int)velocidade);
+        contador++;
+        // desacelera em rampa
+        if (contador % PASSOS_POR_NIVEL == 0 && velocidade > VELO_MINIMA) {
+            velocidade -= VELO_DECREMENTO;
+            if (velocidade < VELO_MINIMA) velocidade = VELO_MINIMA;
+        }
+    }
+}
+
+inline void Mover_Frente_X()  { executar_movimento(passosX_horario,   veloFrente_X, passosFrente_X, MP_X); }
+inline void Mover_Tras_X()    { executar_movimento(passosX_antihorario, veloTras_X,   passosTras_X,   MP_X);  }
+
+// ==================================================================================================== //
+// === Homing e centralização do eixo X ===
+
+void HomingECentraliza_X() {
+    // 1) Homing até posição mínima
+    veloTras_X   = VELO_INICIAL;
+    passosTras_X = 0;
+    while (FimCurso_X.read() == 0) {
+        Mover_Tras_X();
+    }
+
+    // 2) Avança até o fim de curso oposto, contando quantas chamadas de Mover_Frente_X() foram feitas
+    int chamadasFrente = 0;
+    veloFrente_X   = VELO_INICIAL;
+    passosFrente_X = 0;
+    while (FimCursoX_Oposto.read() == 0) {
+        Mover_Frente_X();
+        chamadasFrente++;
+    }
+
+    // 3) Retorna metade dessas chamadas para parar no meio do percurso
+    int meioChamadas = chamadasFrente / 2;
+    veloTras_X   = VELO_INICIAL;
+    passosTras_X = 0;
+    for (int i = 0; i < meioChamadas; i++) {
+        Mover_Tras_X();
+    }
+
+    // 4) Desliga motor
+    MP_X = 0;
+}
+
+// ==================================================================================================== //
+// === Função principal ===
+
+int main() {
+    MP_X = 0;
+    // Executa o homing + centraliza assim que liga
+    HomingECentraliza_X();
+
+    // Se quiser repetir a calibração/centralização apertando o botão de ref:
+    bool lastRef = 1;
+    while (true) {
+        bool currRef = BotaoRef_X.read();
+        if (lastRef == 1 && currRef == 0) {
+            HomingECentraliza_X();
+        }
+        lastRef = currRef;
+        // nada mais a fazer: motor permanece parado no centro
+    }
+}
