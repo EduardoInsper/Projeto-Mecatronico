@@ -74,7 +74,7 @@ int main() {
 
 
 // rs=D8, e=D9, d4=D4, d5=D5, d6=D6, d7=D7 
-TextLCD lcd(D8, D9, D4, D5, D6, D7);
+TextLCD lcd(A0, A1, A2, A3, A4, A5); 
 
 DigitalIn botaoUp(D10);
 DigitalIn botaoDown(D11);
