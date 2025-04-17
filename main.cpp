@@ -74,13 +74,12 @@ int main() {
 
 
 
-// Pinos do LCD (rs, e, d4, d5, d6, d7)
-TextLCD lcd(PA_0, PA_1, PA_2, PA_3, PA_4, PA_5);
+// rs=D8, e=D9, d4=D4, d5=D5, d6=D6, d7=D7
+TextLCD lcd(D8, D9, D4, D5, D6, D7);
 
-// Configuração dos botões (acionam nível alto)
-DigitalIn botaoUp(PB_0);
-DigitalIn botaoDown(PB_1);
-DigitalIn botaoSelect(PB_2);
+DigitalIn botaoUp(D10);
+DigitalIn botaoDown(D11);
+DigitalIn botaoSelect(D12);
 
 // Definição das opções de menu
 const int MENU_LENGTH = 4;
@@ -88,7 +87,7 @@ const char* opcoes[MENU_LENGTH] = {"Referenciamento", "Recipientes in", "Recipie
 int indiceAtual = 0;
 
 int main() {
-    // Habilita resistores pull-down para leitura ativa em nível alto
+    // Leitura ativa em nível alto
     botaoUp.mode(PullDown);
     botaoDown.mode(PullDown);
     botaoSelect.mode(PullDown);
