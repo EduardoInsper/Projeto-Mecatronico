@@ -73,13 +73,13 @@ int main() {
 
 
 
-
-// rs=D8, e=D9, d4=D4, d5=D5, d6=D6, d7=D7
+// rs=D8, e=D9, d4=D4, d5=D5, d6=D6, d7=D7 
 TextLCD lcd(D8, D9, D4, D5, D6, D7);
 
 DigitalIn botaoUp(D10);
 DigitalIn botaoDown(D11);
 DigitalIn botaoSelect(D12);
+DigitalIn botaoBack(D13);  // Novo botão “Back” no pino D13
 
 // Definição das opções de menu
 const int MENU_LENGTH = 4;
@@ -87,12 +87,14 @@ const char* opcoes[MENU_LENGTH] = {"Referenciamento", "Recipientes in", "Recipie
 int indiceAtual = 0;
 
 int main() {
-    // Leitura ativa em nível alto
+    // Leitura ativa em nível alto (Pull-Down interno)
     botaoUp.mode(PullDown);
     botaoDown.mode(PullDown);
     botaoSelect.mode(PullDown);
+    botaoBack.mode(PullDown);  // Configura PullDown para Back
 
     while (true) {
+        // === exibição do menu principal ===
         lcd.cls();  // Limpa o display
 
         // Define as duas opções a serem exibidas
@@ -108,27 +110,45 @@ int main() {
         lcd.locate(0, 1);
         lcd.printf("%s%-14s", (linhaSeguinte == indiceAtual) ? "> " : "  ", opcoes[linhaSeguinte]);
 
-        // Navegação para cima (botão ativo em HIGH)
+        // Navegação para cima
         if (botaoUp) {
             indiceAtual = (indiceAtual - 1 + MENU_LENGTH) % MENU_LENGTH;
             ThisThread::sleep_for(200ms);  // Debounce
         }
 
-        // Navegação para baixo (botão ativo em HIGH)
+        // Navegação para baixo
         if (botaoDown) {
             indiceAtual = (indiceAtual + 1) % MENU_LENGTH;
             ThisThread::sleep_for(200ms);
         }
 
-        // Seleção da opção (botão ativo em HIGH)
+        // Seleção da opção
         if (botaoSelect) {
+            // entra na “subtela” de confirmação
             lcd.cls();
+            lcd.locate(0, 0);
             lcd.printf("Selecionado:");
             lcd.locate(0, 1);
             lcd.printf("%s", opcoes[indiceAtual]);
-            ThisThread::sleep_for(2000ms);  // Exibe confirmação
+
+            // informa que pressione Back para voltar
+            ThisThread::sleep_for(500ms);
+            lcd.cls();
+            lcd.locate(0, 0);
+            lcd.printf("%s", opcoes[indiceAtual]);
+            lcd.locate(0, 1);
+            lcd.printf("< Back");
+
+            // fica aguardando Back
+            while (!botaoBack) {
+                ThisThread::sleep_for(100ms);
+            }
+            ThisThread::sleep_for(200ms);  // Debounce do Back
+
+            // ao sair, volta ao menu (continue implicitamente)
         }
 
         ThisThread::sleep_for(100ms);
     }
 }
+
