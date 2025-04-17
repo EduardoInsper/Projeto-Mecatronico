@@ -74,12 +74,12 @@ int main() {
 
 
 // rs=D8, e=D9, d4=D4, d5=D5, d6=D6, d7=D7 
-TextLCD lcd(A0, A1, A2, A3, A4, A5); 
+TextLCD lcd(D8, D9, D4, D5, D6, D7); 
 
-DigitalIn botaoUp(D10);
-DigitalIn botaoDown(D11);
-DigitalIn botaoSelect(D12);
-DigitalIn botaoBack(D13);  // Novo botão “Back” no pino D13
+DigitalIn botaoUp(A0);
+DigitalIn botaoDown(A1);
+DigitalIn botaoSelect(A2);
+DigitalIn botaoBack(A3);
 
 // Definição das opções de menu
 const int MENU_LENGTH = 4;
