@@ -9,10 +9,10 @@ using namespace std::chrono_literals;  // Permite usar "50ms", "100ms", etc.
 // rs=D8, e=D9, d4=D4, d5=D5, d6=D6, d7=D7 
 TextLCD lcd(D8, D9, D4, D5, D6, D7); 
 
-DigitalIn botaoUp(A0);
-DigitalIn botaoDown(A1);
-DigitalIn botaoSelect(A2);
-DigitalIn botaoBack(A3);
+DigitalIn botaoUp(D12);
+DigitalIn botaoDown(D13);
+DigitalIn botaoSelect(A0);
+DigitalIn botaoBack(A1);
 
 // Definição das opções de menu
 const int MENU_LENGTH = 4;
