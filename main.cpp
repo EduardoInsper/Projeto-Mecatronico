@@ -84,7 +84,7 @@ DigitalIn botaoSelect(PB_2);
 
 // Definição das opções de menu
 const int MENU_LENGTH = 4;
-const char* opcoes[MENU_LENGTH] = {"referenciamento", "recipientes in", "recipientes out", "mover eixos"};
+const char* opcoes[MENU_LENGTH] = {"Referenciamento", "Recipientes in", "Recipientes out", "Mover eixos"};
 int indiceAtual = 0;
 
 int main() {
