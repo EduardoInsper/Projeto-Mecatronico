@@ -2,7 +2,7 @@
 //          Sistema de Pipetagem Automático – Versão Otimizada
 //======================================================================
 //  
-//  Autor: ChatGPT – Eduardo Monteiro Rosa de Souza
+//  Autor: Eduardo Monteiro Rosa de Souza
 //  Plataforma‑alvo: NUCLEO‑STM32 (mbed OS 6)
 //  Data: 22 abr 2025
 //  
