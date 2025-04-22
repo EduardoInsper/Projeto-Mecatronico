@@ -1,22 +1,6 @@
-//======================================================================
-//          Sistema de Pipetagem Automático – Versão Otimizada
-//======================================================================
-//  
-//  Autor: Eduardo Monteiro Rosa de Souza
-//  Plataforma‑alvo: NUCLEO‑STM32 (mbed OS 6)
-//  Data: 22 abr 2025
-//  
-//  Principais melhorias:
-//  • Estrutura Eixo: elimina código duplicado para X, Y e Z
-//  • Substituição de wait() (depreciado) por ThisThread::sleep_for()
-//  • Uso de chrono literals para tempos
-//  • Comentários adicionais
-//  • Funções helper para LCD, cursor e debouncing
-//======================================================================
-
 #include "mbed.h"
 #include "TextLCD.h"
-#include "pinos.h"           // Definição de todos os pinos utilizados
+#include "pinos.h"           // Definição dos pinos utilizados
 
 
 using namespace std::chrono;  // Permite usar 50ms, 1s, etc.
