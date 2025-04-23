@@ -30,12 +30,12 @@
 //======================================================================
 //                           DISPLAY LCD 
 //======================================================================
-#define LCD_EN  PC_5
-#define LCD_RS  D8        
-#define LCD_D4  PC_12     
-#define LCD_D5  PB_13     
-#define LCD_D6  PA_12     
-#define LCD_D7  D3        
+#define LCD_EN PC_5
+#define LCD_RS PA_12
+#define LCD_D4 PA_11
+#define LCD_D5 PB_12 
+#define LCD_D6 PB_15
+#define LCD_D7 PB_14     
 
 //======================================================================
 //                        CONTROLE DA PIPETA
