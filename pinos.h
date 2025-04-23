@@ -24,10 +24,9 @@
 //======================================================================
 //             BOTÕES DE CONTROLE E EMERGÊNCIA
 //======================================================================
-#define EMER_2    PB_15    // antes LCD_D6
-#define BTN_ENTER PB_2     // antes PIPETA
-#define BTN_CANCEL PB_11   // antes EMER_2
-
+#define EMER_2    PB_15    
+#define BTN_ENTER PB_2     
+#define BTN_CANCEL PB_11   
 //======================================================================
 //                           DISPLAY LCD 
 //======================================================================
