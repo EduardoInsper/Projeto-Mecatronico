@@ -1,5 +1,5 @@
 #include "mbed.h"
-#include "TextLCD.h"
+#include "TextLCD.h" 
 #include "pinos.h"           // Definição dos pinos utilizados
 #include <chrono>
 
