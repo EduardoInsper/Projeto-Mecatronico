@@ -30,12 +30,9 @@
 //======================================================================
 //                           DISPLAY LCD 
 //======================================================================
-#define LCD_EN PC_5
-#define LCD_RS PA_12
-#define LCD_D4 PA_11
-#define LCD_D5 PB_12 
-#define LCD_D6 PB_15
-#define LCD_D7 PB_14     
+#define I2C_SDA       D14      // PB_9  (SDA)
+#define I2C_SCL       D15      // PB_8  (SCL)
+#define LCD_I2C_ADDR  0x27     // Alterar para 0x3F se necessário
 
 //======================================================================
 //                        CONTROLE DA PIPETA

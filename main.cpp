@@ -37,7 +37,8 @@ inline bool debounce() {
 //======================================================================
 //                         LCD (20×4)
 //======================================================================
-TextLCD lcd(LCD_RS, LCD_EN, LCD_D4, LCD_D5, LCD_D6, LCD_D7, TextLCD::LCD20x4);
+I2C i2c_bus(I2C_SDA, I2C_SCL);
+TextLCD_I2C lcd(&i2c_bus, LCD_I2C_ADDR, TextLCD::LCD20x4);
 
 inline void lcdLimpar() {
     lcd.cls();
