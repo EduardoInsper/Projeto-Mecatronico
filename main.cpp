@@ -1,7 +1,7 @@
 #include "mbed.h"
 #include "TextLCD.h"
 #include "pinos.h"           // Definição dos pinos utilizados
-
+#include <chrono>
 
 using namespace std::chrono;  // Permite usar 50ms, 1s, etc.
 using namespace mbed;        // Facilita callback()
