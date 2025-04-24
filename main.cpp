@@ -16,7 +16,7 @@ using namespace mbed;
 //------------------------------------------------------------------------------------------------
 // Constantes e flags globais
 //------------------------------------------------------------------------------------------------
-constexpr auto T_PULSO = 1ms;                 // Periodo do ticker (velocidade do motor)
+constexpr auto T_PULSO = 3ms;                 // Periodo do ticker (velocidade do motor)
 volatile bool habilitarMovimentos = true;     // Travamento global (emergência)
 
 //------------------------------------------------------------------------------------------------
