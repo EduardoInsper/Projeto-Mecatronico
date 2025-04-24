@@ -1,4 +1,4 @@
-/******************************************************************************************
+/* *****************************************************************************************
  *  Núcleo mínimo – Movimentação manual dos eixos, homing e **emergência**.
  *  Mantém apenas:
  *      • Estrutura/instâncias dos 3 eixos (motores, fins-de-curso, botões)
@@ -8,7 +8,7 @@
  *  PERSONALIZE:
  *      • Ajuste os pinos em pinos.h
  *      • Se quiser, chame referenciarEixos() novamente quando liberar a emergência
- ******************************************************************************************/
+ ***************************************************************************************** */
 
 #include "mbed.h"
 #include "pinos.h"          // Mapeamento de pinos do seu hardware
