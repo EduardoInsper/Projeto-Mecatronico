@@ -1,11 +1,3 @@
-/* *****************************************************************************************
- *  Núcleo mínimo – Movimentação manual dos eixos, homing e **emergência**.
- *  Mantém apenas:
- *      • Estrutura/instâncias dos 3 eixos (motores, fins-de-curso, botões)
- *      • Rotina de homing Z → Y → X
- *      • Botão de emergência (EMER_2) que trava/destrava todos os motores
- ***************************************************************************************** */
-
 #include "mbed.h"
 #include "pinos.h"          // Mapeamento de pinos do hardware
 #include <chrono>
@@ -13,15 +5,16 @@
 using namespace std::chrono;
 using namespace mbed;
 
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 // Constantes e flags globais
-//------------------------------------------------------------------------------------------------
-constexpr auto T_PULSO = 3ms;                 // Periodo do ticker (velocidade do motor)
-volatile bool habilitarMovimentos = true;     // Travamento global (emergência)
+//============================================================================================
+constexpr auto T_PULSO  = 3ms;                  // Período do ticker (velocidade do motor)
+constexpr auto T_DEBOUNCE = 20ms;               // Debounce simples para o botão START
+volatile bool habilitarMovimentos = true;       // Travamento global (emergência)
 
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 // Estrutura de um eixo
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 struct Eixo {
     InterruptIn  fdcTopo;
     InterruptIn  fdcBase;
@@ -43,7 +36,7 @@ struct Eixo {
           btnCima(pBtnCima), btnBaixo(pBtnBaixo),
           pulso(pPulso), enable(pEnable, 1 /*desabilitado*/), dir(pDir, 0)
     {
-        // Fins-de-curso
+        // Fins‑de‑curso
         fdcTopo.rise(callback(this,&Eixo::atingiuTopo));
         fdcTopo.fall(callback(this,&Eixo::liberarTopo));
         fdcBase.rise(callback(this,&Eixo::atingiuBase));
@@ -79,30 +72,31 @@ struct Eixo {
     }
     void parar() { ticker.detach(); enable = 1; }
 
-    // Fins-de-curso
+    // Fins‑de‑curso
     void atingiuTopo()  { parar(); permitirCima  = false; }
     void liberarTopo()  { permitirCima  = true;  }
     void atingiuBase()  { parar(); permitirBaixo = false; }
     void liberarBase()  { permitirBaixo = true;  }
 };
-
-//------------------------------------------------------------------------------------------------
+//============================================================================================
+// Botão para Start
+//============================================================================================
+DigitalIn btnStart(BTN_ENTER, PullDown);
+//============================================================================================
 // Instâncias dos eixos
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 Eixo eixoX(FDC_XUP, FDC_XDWN, BTN_XUP, BTN_XDWN, MOTOR_X, EN_X, DIR_X);
 Eixo eixoY(FDC_YUP, FDC_YDWN, BTN_YUP, BTN_YDWN, MOTOR_Y, EN_Y, DIR_Y);
 Eixo eixoZ(FDC_ZUP, FDC_ZDWN, BTN_ZUP, BTN_ZDWN, MOTOR_Z, EN_Z, DIR_Z);
 
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 // Funções de emergência
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 InterruptIn botaoEmerg(EMER_2);
 
 void emergenciaOn()
 {
     habilitarMovimentos = false;
-
-    // Garante parada imediata dos motores
     eixoX.parar();
     eixoY.parar();
     eixoZ.parar();
@@ -111,12 +105,11 @@ void emergenciaOn()
 void emergenciaOff()
 {
     habilitarMovimentos = true;
-    void referenciarEixos();
 }
 
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 // Homing: Z topo → Y topo → X base
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 void referenciarEixos()
 {
     // Z → topo
@@ -132,20 +125,38 @@ void referenciarEixos()
     eixoX.passos = 0;
 }
 
-//------------------------------------------------------------------------------------------------
+//============================================================================================
+// Aguarda pressionamento do botão START (ativo‑alto)
+//============================================================================================
+void aguardarStart()
+{
+    // Espera até o botão ser pressionado
+    while (!btnStart.read()) {
+        ThisThread::sleep_for(T_DEBOUNCE);
+    }
+    // Debounce – aguarda estabilizar
+    ThisThread::sleep_for(T_DEBOUNCE);
+    // Espera soltar para evitar múltiplos disparos
+    while (btnStart.read()) {
+        ThisThread::sleep_for(T_DEBOUNCE);
+    }
+}
+
+//============================================================================================
 // MAIN
-//------------------------------------------------------------------------------------------------
+//============================================================================================
 int main()
 {
     // Configura botão de emergência
     botaoEmerg.rise(&emergenciaOn);
     botaoEmerg.fall(&emergenciaOff);
 
-    referenciarEixos();   // Homing na partida
+    // Aguarda operador pressionar START antes de fazer homing
+    aguardarStart();
+    referenciarEixos();
 
     while (true) {
-        /* Movimento manual já está ligado aos botões.
-           Nada a fazer aqui além de cooperar com o RTOS. */
+        // Movimento manual está ligado aos botões; nada extra aqui.
         ThisThread::yield();
     }
 }
