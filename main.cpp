@@ -8,8 +8,7 @@ using namespace mbed;
 //============================================================================================
 // Constantes e flags globais
 //============================================================================================
-constexpr auto T_PULSO  = 3ms;                  // Período do ticker (velocidade do motor)
-constexpr auto T_DEBOUNCE = 20ms;               // Debounce simples para o botão START
+constexpr auto T_PULSO  = 5ms;                  // Período do ticker (velocidade do motor)
 volatile bool habilitarMovimentos = true;       // Travamento global (emergência)
 
 //============================================================================================
@@ -125,22 +124,6 @@ void referenciarEixos()
     eixoX.passos = 0;
 }
 
-//============================================================================================
-// Aguarda pressionamento do botão START (ativo‑alto)
-//============================================================================================
-void aguardarStart()
-{
-    // Espera até o botão ser pressionado
-    while (!btnStart.read()) {
-        ThisThread::sleep_for(T_DEBOUNCE);
-    }
-    // Debounce – aguarda estabilizar
-    ThisThread::sleep_for(T_DEBOUNCE);
-    // Espera soltar para evitar múltiplos disparos
-    while (btnStart.read()) {
-        ThisThread::sleep_for(T_DEBOUNCE);
-    }
-}
 
 //============================================================================================
 // MAIN
@@ -151,8 +134,6 @@ int main()
     botaoEmerg.rise(&emergenciaOn);
     botaoEmerg.fall(&emergenciaOff);
 
-    // Aguarda operador pressionar START antes de fazer homing
-    aguardarStart();
     referenciarEixos();
 
     while (true) {
