@@ -11,7 +11,7 @@
  ***************************************************************************************** */
 
 #include "mbed.h"
-#include "pinos.h"          // Mapeamento de pinos do seu hardware
+#include "pinos.h"          // Mapeamento de pinos do hardware
 #include <chrono>
 
 using namespace std::chrono;
