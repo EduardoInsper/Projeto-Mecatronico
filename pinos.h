@@ -6,8 +6,8 @@
 //======================================================================
 #define FDC_YUP PC_11      // Sensor de fim de curso no sentido "para cima" do eixo Y
 #define FDC_YDWN D11       // Sensor de fim de curso no sentido "para baixo" do eixo Y
-#define FDC_XUP PC_9       // Sensor de fim de curso no sentido "para cima" do eixo X         pino errado
-#define FDC_XDWN PB_6      // Sensor de fim de curso no sentido "para baixo" do eixo X        pino errado
+#define FDC_XUP PC_9       // Sensor de fim de curso no sentido "para cima" do eixo X         
+#define FDC_XDWN PB_5      // Sensor de fim de curso no sentido "para baixo" do eixo X        
 #define FDC_ZUP PC_6       // Sensor de fim de curso no sentido "para cima" do eixo Z
 #define FDC_ZDWN PC_10     // Sensor de fim de curso no sentido "para baixo" do eixo Z
 
@@ -24,7 +24,7 @@
 //======================================================================
 //             BOTÕES DE CONTROLE E EMERGÊNCIA
 //======================================================================
-#define EMER_2 PB_11       // Botão de emergência
+#define EMER_2 PA_4      // Botão de emergência
 
 
 
