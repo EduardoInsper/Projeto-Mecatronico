@@ -4,10 +4,6 @@
  *      • Estrutura/instâncias dos 3 eixos (motores, fins-de-curso, botões)
  *      • Rotina de homing Z → Y → X
  *      • Botão de emergência (EMER_2) que trava/destrava todos os motores
- *
- *  PERSONALIZE:
- *      • Ajuste os pinos em pinos.h
- *      • Se quiser, chame referenciarEixos() novamente quando liberar a emergência
  ***************************************************************************************** */
 
 #include "mbed.h"
@@ -115,9 +111,7 @@ void emergenciaOn()
 void emergenciaOff()
 {
     habilitarMovimentos = true;
-    /* Se desejar, re-execute homing aqui:
-       referenciarEixos();
-    */
+    void referenciarEixos();
 }
 
 //------------------------------------------------------------------------------------------------
