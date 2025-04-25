@@ -16,7 +16,7 @@ InterruptIn fdcMax(FDC_YUP);      // fim-de-curso MAX  (ativo ALTO)
 /* --------- PARÂMETROS -------------------------------------- */
 constexpr auto STEP_PERIOD = 1ms;
 Ticker  clkY;
-volatile bool tickerOn = false;
+volatile bool tickerOn = false; 
 
 /* --------- VARIÁVEIS --------------------------------------- */
 enum class HomingState { TO_MIN, TO_MAX, FINISHED };
