@@ -141,8 +141,151 @@ int main(){
 
 IDEIA 2 REFERENCIA SIMULTANEAMENTE E PERMITE MOVIMENTO
 
+/* ==============================================================
+ *  3 eixos (X-Y-Z) │ homing simultâneo + soft-limits + jog manual
+ *  → NÃO há movimento automático “vai-e-vem”
+ * ============================================================*/
+#include "mbed.h"
+#include "pinos.h"
+
+constexpr auto STEP_PERIOD = 1ms;
+enum class HomingState { TO_MIN, TO_MAX, FINISHED };
+
+struct Axis {
+    DigitalOut  step, dir, en;
+    InterruptIn fdcMin, fdcMax;
+    DigitalIn   btnUp, btnDn;
+
+    volatile int32_t steps{0};
+    int32_t travelSteps{0}, limitMin{0}, limitMax{0};
+    volatile bool limitsActive{false};
+    volatile HomingState state{HomingState::TO_MIN};
+
+    Ticker clk;
+    volatile bool tickerOn{false};
+    bool manualJog{false};
+
+    Axis(PinName pStep, PinName pDir, PinName pEn,
+         PinName pFdcMin, PinName pFdcMax,
+         PinName pBtnUp, PinName pBtnDn)
+        : step(pStep), dir(pDir), en(pEn,1),
+          fdcMin(pFdcMin), fdcMax(pFdcMax),
+          btnUp(pBtnUp, PullDown), btnDn(pBtnDn, PullDown) {}
+};
+
+/* ---------- instâncias ---------- */
+Axis axX(MOTOR_X, DIR_X, EN_X, FDC_XDWN, FDC_XUP, BTN_XUP, BTN_XDWN);
+Axis axY(MOTOR_Y, DIR_Y, EN_Y, FDC_YDWN, FDC_YUP, BTN_YUP, BTN_YDWN);
+Axis axZ(MOTOR_Z, DIR_Z, EN_Z, FDC_ZDWN, FDC_ZUP, BTN_ZUP, BTN_ZDWN);
+
+/* utilidades */
+void stopTicker(Axis& a){ a.clk.detach(); a.tickerOn=false; a.en=1; }
+void startTicker(Axis& a, Callback<void()> cb){ a.clk.attach(cb, STEP_PERIOD); a.tickerOn=true; a.en=0; }
+
+/* --------- STEP ISRs --------- */
+#define MAKE_STEP_ISR(axisVar, ISRNAME)                   \
+void ISRNAME(){                                           \
+    axisVar.step = !axisVar.step;                         \
+    if(axisVar.step){                                     \
+        axisVar.steps += (axisVar.dir ? -1 : 1);          \
+        if(axisVar.limitsActive &&                        \
+           ((axisVar.dir==0&&axisVar.steps>=axisVar.limitMax) || \
+            (axisVar.dir==1&&axisVar.steps<=axisVar.limitMin))){ \
+            stopTicker(axisVar);                          \
+            axisVar.manualJog=false;                      \
+        }                                                 \
+    }                                                     \
+}
+
+MAKE_STEP_ISR(axX, stepISR_X);
+MAKE_STEP_ISR(axY, stepISR_Y);
+MAKE_STEP_ISR(axZ, stepISR_Z);
+
+/* --------- ISRs de fim-de-curso --------- */
+void reachedMax(Axis&);
+
+void reachedMin(Axis& a, void (*maxISR)(), void (*stepISR)()){
+    stopTicker(a); a.steps = 0;
+    a.fdcMin.rise(nullptr);
+    a.dir = 0; a.state = HomingState::TO_MAX;
+    a.fdcMax.rise(maxISR);
+    startTicker(a, stepISR);
+}
+
+void reachedMin_X(){ reachedMin(axX, reachedMax_X, stepISR_X); }
+void reachedMin_Y(){ reachedMin(axY, reachedMax_Y, stepISR_Y); }
+void reachedMin_Z(){ reachedMin(axZ, reachedMax_Z, stepISR_Z); }
+
+void reachedMax(Axis& a){
+    stopTicker(a);
+    a.travelSteps = a.steps;
+    a.limitMin = 0; a.limitMax = a.travelSteps;
+    a.limitsActive = true;
+    a.fdcMax.rise(nullptr);
+    a.state = HomingState::FINISHED;
+}
+
+void reachedMax_X(){ reachedMax(axX); }
+void reachedMax_Y(){ reachedMax(axY); }
+void reachedMax_Z(){ reachedMax(axZ); }
+
+/* --------- Homing --------- */
+void referenciar(Axis& a,
+                 Callback<void()> minISR,
+                 Callback<void()> maxISR,
+                 Callback<void()> stepISR){
+    stopTicker(a);
+    a.steps = 0; a.limitsActive = false;
+    a.state = HomingState::TO_MIN;
+    a.dir   = 1; a.en = 0;
+    a.fdcMin.rise(minISR);
+    a.fdcMax.rise(maxISR);
+    startTicker(a, stepISR);
+}
+
+void homingAll(){
+    referenciar(axX, reachedMin_X, reachedMax_X, stepISR_X);
+    referenciar(axY, reachedMin_Y, reachedMax_Y, stepISR_Y);
+    referenciar(axZ, reachedMin_Z, reachedMax_Z, stepISR_Z);
+
+    while(!(axX.state==HomingState::FINISHED &&
+            axY.state==HomingState::FINISHED &&
+            axZ.state==HomingState::FINISHED)){
+        ThisThread::sleep_for(5ms);
+    }
+}
+
+/* --------- Jog manual --------- */
+void handleJog(Axis& a, Callback<void()> stepISR){
+    if(!a.btnUp.read() && !a.btnDn.read()){
+        if(a.manualJog){ stopTicker(a); a.manualJog=false; }
+        return;
+    }
+    if(!a.tickerOn){
+        if(a.btnUp.read() && a.steps < a.limitMax){
+            a.dir = 0; a.manualJog=true; startTicker(a, stepISR);
+        }
+        else if(a.btnDn.read() && a.steps > a.limitMin){
+            a.dir = 1; a.manualJog=true; startTicker(a, stepISR);
+        }
+    }
+}
+
+/* ------------------ main ------------------ */
+int main(){
+    homingAll();                 // homing simultâneo
+
+    while(true){
+        handleJog(axX, stepISR_X);
+        handleJog(axY, stepISR_Y);
+        handleJog(axZ, stepISR_Z);
+        ThisThread::sleep_for(5ms);
+    }
+}
 
 
+
+IDEIA DE PROJETO FINAL
 
 
 #include "mbed.h"
