@@ -1,3 +1,5 @@
+IDEIA 1 REFERENCIA SIMULTANEAMENTE OS EIXOS E DEIXA OS MOTORES INDO E VOLTANDO
+
 /*
 /* ==============================================================
  *  Controle de 3 eixos (X, Y, Z) │ homing simultâneo + soft-limits
@@ -137,7 +139,7 @@ int main(){
 
 
 
-Projeto Final 
+IDEIA 2 REFERENCIA SIMULTANEAMENTE E PERMITE MOVIMENTO
 
 
 
