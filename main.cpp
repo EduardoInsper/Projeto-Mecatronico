@@ -4,7 +4,7 @@
  * ============================================================*/
 
 #include "mbed.h"
-#include "pinos.h"
+#include "pinos.h" 
 
 /* --------- PINOS (ajuste se necessário) -------------------- */
 DigitalOut  stepY (MOTOR_Y);
