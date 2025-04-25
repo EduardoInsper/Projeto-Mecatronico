@@ -1,140 +1,97 @@
 #include "mbed.h"
-#include "pinos.h"          // Mapeamento de pinos do hardware
-#include <chrono>
+#include "pinos.h"
 
-using namespace std::chrono;
-using namespace mbed;
+/*---------- PINOS (ajuste se precisar) -----------------------*/
+DigitalOut  stepY (MOTOR_Y);
+DigitalOut  dirY  (DIR_Y);           // 0 → MIN , 1 → MAX
+DigitalOut  enY   (EN_Y , 1);        // 0 = driver ON
+InterruptIn fdcMin(FDC_YDWN);        // sensor MIN – ativo ALTO
+InterruptIn fdcMax(FDC_YUP);        // sensor MAX – ativo ALTO
 
-//============================================================================================
-// Constantes e flags globais
-//============================================================================================
-constexpr auto T_PULSO  = 5ms;                  // Período do ticker (velocidade do motor)
-volatile bool habilitarMovimentos = true;       // Travamento global (emergência)
+/*---------- PARÂMETROS ---------------------------------------*/
+constexpr auto STEP_PERIOD = 1ms;
+Ticker  clkY;
+volatile bool tickerOn = false;      // <-- NOVO
 
-//============================================================================================
-// Estrutura de um eixo
-//============================================================================================
-struct Eixo {
-    InterruptIn  fdcTopo;
-    InterruptIn  fdcBase;
-    InterruptIn  btnCima;
-    InterruptIn  btnBaixo;
-    DigitalOut   pulso;
-    DigitalOut   enable;
-    DigitalOut   dir;
+/*---------- VARIÁVEIS ----------------------------------------*/
+enum class HomingState { TO_MIN, TO_MAX, BACK_TO_CENTER, FINISHED };
+volatile HomingState state = HomingState::TO_MIN;
 
-    Ticker       ticker;
-    volatile int passos  = 0;
-    volatile bool permitirCima  = true;
-    volatile bool permitirBaixo = true;
+volatile int32_t steps     = 0;      // posição atual
+int32_t  travelSteps       = 0;      // curso total
+int32_t  limitMin          = 0;
+int32_t  limitMax          = 0;
+volatile bool limitsActive = false;
 
-    Eixo(PinName pFdcTopo, PinName pFdcBase,
-         PinName pBtnCima, PinName pBtnBaixo,
-         PinName pPulso,   PinName pEnable, PinName pDir)
-        : fdcTopo(pFdcTopo), fdcBase(pFdcBase),
-          btnCima(pBtnCima), btnBaixo(pBtnBaixo),
-          pulso(pPulso), enable(pEnable, 1 /*desabilitado*/), dir(pDir, 0)
-    {
-        // Fins‑de‑curso
-        fdcTopo.rise(callback(this,&Eixo::atingiuTopo));
-        fdcTopo.fall(callback(this,&Eixo::liberarTopo));
-        fdcBase.rise(callback(this,&Eixo::atingiuBase));
-        fdcBase.fall(callback(this,&Eixo::liberarBase));
+/*---------- Funções auxiliares p/ controlar o Ticker ---------*/
+inline void stopTicker()  { clkY.detach();                     tickerOn = false; }
 
-        // Botões manuais
-        btnCima.fall(callback(this,&Eixo::moverCima));
-        btnCima.rise(callback(this,&Eixo::parar));
-        btnBaixo.fall(callback(this,&Eixo::moverBaixo));
-        btnBaixo.rise(callback(this,&Eixo::parar));
+/*---------- STEP ISR -----------------------------------------*/
+void stepISR() {
+    stepY = !stepY;
+    if (stepY) {
+        steps += (dirY ? 1 : -1);
+        if (limitsActive) {
+            if ((dirY  && steps >= limitMax) ||
+                (!dirY && steps <= limitMin)) {
+                stopTicker();        // parou no limite
+                enY = 1;             // desliga driver
+            }
+        }
     }
-
-    // Pulso único
-    void geraPulso()
-    {
-        pulso = !pulso;
-        if (pulso)
-            passos += (dir ? 1 : -1);
-    }
-
-    // Movimento manual
-    void moverCima()
-    {
-        if (!permitirCima || !habilitarMovimentos) return;
-        dir = 0; enable = 0;
-        ticker.attach(callback(this,&Eixo::geraPulso), T_PULSO);
-    }
-    void moverBaixo()
-    {
-        if (!permitirBaixo || !habilitarMovimentos) return;
-        dir = 1; enable = 0;
-        ticker.attach(callback(this,&Eixo::geraPulso), T_PULSO);
-    }
-    void parar() { ticker.detach(); enable = 1; }
-
-    // Fins‑de‑curso
-    void atingiuTopo()  { parar(); permitirCima  = false; }
-    void liberarTopo()  { permitirCima  = true;  }
-    void atingiuBase()  { parar(); permitirBaixo = false; }
-    void liberarBase()  { permitirBaixo = true;  }
-};
-
-//============================================================================================
-// Instâncias dos eixos
-//============================================================================================
-Eixo eixoX(FDC_XUP, FDC_XDWN, BTN_XUP, BTN_XDWN, MOTOR_X, EN_X, DIR_X);
-Eixo eixoY(FDC_YUP, FDC_YDWN, BTN_YUP, BTN_YDWN, MOTOR_Y, EN_Y, DIR_Y);
-Eixo eixoZ(FDC_ZUP, FDC_ZDWN, BTN_ZUP, BTN_ZDWN, MOTOR_Z, EN_Z, DIR_Z);
-
-//============================================================================================
-// Funções de emergência
-//============================================================================================
-InterruptIn botaoEmerg(EMER_2);
-
-void emergenciaOn()
-{
-    habilitarMovimentos = false;
-    eixoX.parar();
-    eixoY.parar();
-    eixoZ.parar();
 }
 
-void emergenciaOff()
-{
-    habilitarMovimentos = true;
+/*---------- Funções auxiliares p/ controlar o Ticker ---------*/
+inline void startTicker() { clkY.attach(&stepISR, STEP_PERIOD); tickerOn = true; }
+
+/*---------- Fim-de-curso MIN --------------------------------*/
+void reachedMin() {
+    stopTicker();   enY = 1; steps = 0;
+    fdcMin.rise(NULL);
+    dirY = 1;       enY = 0;          // rumo ao MAX
+    state = HomingState::TO_MAX;
+    startTicker();
 }
 
-//============================================================================================
-// Homing: Z topo → Y topo → X base
-//============================================================================================
-void referenciarEixos()
-{
-    // Z → topo
-    eixoZ.moverCima();  while (eixoZ.permitirCima)  { ThisThread::yield(); }
-    eixoZ.passos = 0;
-
-    // Y → topo
-    eixoY.moverCima();  while (eixoY.permitirCima)  { ThisThread::yield(); }
-    eixoY.passos = 0;
-
-    // X → base
-    eixoX.moverBaixo(); while (eixoX.permitirBaixo) { ThisThread::yield(); }
-    eixoX.passos = 0;
+/*---------- Fim-de-curso MAX --------------------------------*/
+void reachedMax() {
+    stopTicker();   enY = 1;
+    travelSteps = steps;             // curso total
+    fdcMax.rise(NULL);
+    dirY = 0;       enY = 0; steps = 0;  // volta p/ centro
+    state = HomingState::BACK_TO_CENTER;
+    startTicker();
 }
 
+/*============================================================*/
+int main() {
+    /*--- HOMING AUTOMÁTICO ---*/
+    dirY = 0; enY = 0;                // parte em direção ao MIN
+    fdcMin.rise(&reachedMin);
+    startTicker();
 
-//============================================================================================
-// MAIN
-//============================================================================================
-int main()
-{
-    // Configura botão de emergência
-    botaoEmerg.rise(&emergenciaOn);
-    botaoEmerg.fall(&emergenciaOff);
+    /*--- Aguarda homing terminar ---*/
+    while (state != HomingState::FINISHED) {
+        if (state == HomingState::BACK_TO_CENTER &&
+            steps <= -travelSteps / 2) {
+            stopTicker(); enY = 1;
+            limitMin      = -travelSteps / 2;
+            limitMax      =  travelSteps / 2;
+            limitsActive  = true;
+            state         = HomingState::FINISHED;
+        }
+        ThisThread::sleep_for(5ms);
+    }
 
-    referenciarEixos();
-
+    /*--- LOOP VAI-E-VEM CONTÍNUO ---*/
     while (true) {
-        // Movimento manual está ligado aos botões; nada extra aqui.
-        ThisThread::yield();
+        /* Se o motor está parado (tickerOff), inverta o sentido
+           e reinicie os passos até bater no outro limite         */
+        if (!tickerOn) {
+            dirY = !dirY;   // troca sentido
+            enY  = 0;       // habilita driver
+            startTicker();
+        }
+        ThisThread::sleep_for(5ms);
     }
 }
