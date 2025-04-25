@@ -24,7 +24,7 @@ int32_t  limitMax          = 0;
 volatile bool limitsActive = false;
 
 /*---------- Funções auxiliares p/ controlar o Ticker ---------*/
-inline void stopTicker()  { clkY.detach();                     tickerOn = false; }
+inline void stopTicker()  { clkY.detach();tickerOn = false; }
 
 /*---------- STEP ISR -----------------------------------------*/
 void stepISR() {
