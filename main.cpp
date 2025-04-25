@@ -1,124 +1,217 @@
-/* ==============================================================
- *  Vai-e-vem contínuo do eixo Y  │ homing MIN→MAX + limites SW
- *  DIR_Y: 0 → sentido MAX | 1 → sentido MIN   (inversão ajustada)
- * ============================================================*/
-
 #include "mbed.h"
-#include "pinos.h" 
+#include "pinos.h"
+#include <chrono>
 
-/* --------- PINOS (ajuste se necessário) -------------------- */
-DigitalOut  stepY (MOTOR_Y);
-DigitalOut  dirY  (DIR_Y);        // 0 = MAX ; 1 = MIN
-DigitalOut  enY   (EN_Y , 1);     // 0 = driver habilitado
-InterruptIn fdcMin(FDC_YDWN);     // fim-de-curso MIN  (ativo ALTO)
-InterruptIn fdcMax(FDC_YUP);      // fim-de-curso MAX  (ativo ALTO)
+using namespace std::chrono;
 
-/* --------- PARÂMETROS -------------------------------------- */
-constexpr auto STEP_PERIOD = 1ms;
-Ticker  clkY;
-volatile bool tickerOn = false; 
+// ==== PINOS ====  
+static constexpr PinName PINO_STEP       = MOTOR_Y;      // pulso de step  
+static constexpr PinName PINO_DIR        = DIR_Y;        // direção: 0=frente→MAX, 1=trás→MIN  
+static constexpr PinName PINO_ENABLE     = EN_Y;         // low = driver habilitado  
 
-/* --------- VARIÁVEIS --------------------------------------- */
-enum class HomingState { TO_MIN, TO_MAX, FINISHED };
-volatile HomingState state = HomingState::TO_MIN;
+static constexpr PinName FDC_MIN_PIN     = FDC_YDWN;     // fim-de-curso MIN (ativo HIGH)  
+static constexpr PinName FDC_MAX_PIN     = FDC_YUP;      // fim-de-curso MAX (ativo HIGH)  
 
-volatile int32_t steps     = 0;    // posição atual (0 = MIN)
-int32_t  travelSteps       = 0;    // curso total
-int32_t  limitMin          = 0;    // limites de software
-int32_t  limitMax          = 0;
-volatile bool limitsActive = false;
+static constexpr PinName BTN_START_REF   = PB_13;        // inicia homing  
+static constexpr PinName BTN_MOVE_FWD    = PC_3;         // move frente enquanto pressionado  
+static constexpr PinName BTN_MOVE_BWD    = PA_15;        // move trás enquanto pressionado  
 
-inline void stopTicker()  { clkY.detach();                      tickerOn = false; }
+// ==== PARÂMETROS DE VELOCIDADE ====  
+static constexpr microseconds PERIODO_INICIAL      {1000};  // 1 ms  
+static constexpr microseconds PERIODO_MINIMO       { 200};  // 0,2 ms (velocidade máxima)  
+static constexpr int          PASSOS_PARA_ACELERAR { 250};  
+static constexpr microseconds REDUCAO_PERIOD       { 100};  // 0,1 ms  
+
+// ==== TIPOS AUXILIARES ====  
+enum class Direcao { FRENTE, TRAS };
+
+// ==== OBJETOS MBED ====  
+DigitalOut   stepPin        (PINO_STEP,     0);
+DigitalOut   dirPin         (PINO_DIR,      0);
+DigitalOut   enablePin      (PINO_ENABLE,   1);
+
+DigitalIn    limitSwitchMin (FDC_MIN_PIN);
+DigitalIn    limitSwitchMax (FDC_MAX_PIN);
+
+DigitalIn    btnStartRef    (BTN_START_REF);
+DigitalIn    btnMoveFwd     (BTN_MOVE_FWD);
+DigitalIn    btnMoveBwd     (BTN_MOVE_BWD);
+
+Ticker       stepTicker;
+
+// ==== ESTADO GLOBAL ====  
+volatile int32_t   position       = 0;
+int32_t            minPosition    = 0;
+int32_t            maxPosition    = 0;
+bool               softwareLimits = false;
+volatile Direcao   currentDir     = Direcao::FRENTE;
+volatile bool      tickerRunning  = false;
+bool               homed          = false;
+
+// aceleração  
+microseconds periodoAtual  = PERIODO_INICIAL;
+int          contadorPassos = 0;
+
+// estados anteriores dos botões (para borda de subida)
+bool lastFwdState = false;
+bool lastBwdState = false;
+
+// —— Protótipos ——
+void stepISR();
+void startTicker();
+void stopTicker();
+void Mover_Frente();
+void Mover_Tras();
+void Parar_Movimento();
+void Referenciamento();
 
 
-/* --------- STEP ISR ---------------------------------------- */
+// ==== IMPLEMENTAÇÃO ====  
+
 void stepISR() {
-    stepY = !stepY;
-    if (stepY) {
-        steps += (dirY ? -1 : 1);          // dirY=1 → MIN (-1); dirY=0 → MAX (+1)
+    // **Software-limits guard**: não gera novos pulsos além dos limites
+    if (softwareLimits) {
+        if (currentDir == Direcao::FRENTE && position >= maxPosition) {
+            stopTicker();
+            return;
+        }
+        if (currentDir == Direcao::TRAS && position <= minPosition) {
+            stopTicker();
+            return;
+        }
+    }
 
-        if (limitsActive) {                // aplica limites de software
-            if ((dirY == 0 && steps >= limitMax) ||     // indo p/ MAX
-                (dirY == 1 && steps <= limitMin)) {     // indo p/ MIN
-                stopTicker();
-                enY = 1;
-            }
+    // gera pulso
+    stepPin = !stepPin;
+    if (!stepPin) return;  // conta só na borda de subida
+
+    // 1) atualiza posição
+    if (currentDir == Direcao::FRENTE)  position++;
+    else                                 position--;
+
+    // 2) soft-limits no ISR já feito acima
+
+    // 3) aceleração a cada N passos
+    if (++contadorPassos >= PASSOS_PARA_ACELERAR) {
+        contadorPassos = 0;
+        if (periodoAtual > PERIODO_MINIMO) {
+            periodoAtual -= REDUCAO_PERIOD;
+            stepTicker.attach(&stepISR, periodoAtual);
+            tickerRunning = true;
         }
     }
 }
 
-inline void startTicker() { clkY.attach(&stepISR, STEP_PERIOD); tickerOn = true; }
-
-/* --------- Fim-de-curso MAX -------------------------------- */
-void reachedMax() {
-    stopTicker();               // pára o motor
-    enY = 1;                    // desliga driver
-
-    travelSteps = steps;        // distância MIN→MAX
-    limitMin    = 0;
-    limitMax    = travelSteps;
-    limitsActive = true;        // ativa os soft-limits
-
-    fdcMax.rise(NULL);          // desarma interrupção
-
-    state = HomingState::FINISHED;
-    /* NÃO reinicie o ticker aqui – homing terminou */
+void startTicker() {
+    if (!tickerRunning) {
+        stepTicker.attach(&stepISR, periodoAtual);
+        tickerRunning = true;
+    }
 }
 
-/* --------- Fim-de-curso MIN -------------------------------- */
-void reachedMin() {
-    stopTicker();     enY = 1;
-    steps = 0;                          // origem absoluta = 0 no MIN
-    fdcMin.rise(NULL);                  // desarma interrupção
-    
-    dirY = 0;        enY = 0;           // parte p/ MAX
-    state = HomingState::TO_MAX;
-    startTicker();
+void stopTicker() {
+    stepTicker.detach();
+    tickerRunning = false;
 }
-/* ---------- HOMING / REFERENCIAMENTO ---------- */
-void referenciar() {
 
-    /* 1. Reinicializa variáveis de posição e limites */
-    stopTicker();            // garante motor parado
-    steps        = 0;        // posição atual
-    travelSteps  = 0;        // curso total ainda desconhecido
-    limitMin     = 0;
-    limitMax     = 0;
-    limitsActive = false;    // soft-limits desabilitados
-    state        = HomingState::TO_MIN;
-
-    /* 2. Configura direção e ISRs de fim-de-curso */
-    dirY = 1;                // vai em direção ao MIN
-    enY  = 0;                // habilita driver
-
-    fdcMin.rise(&reachedMin);   // ISR para MIN
-    fdcMax.rise(&reachedMax);   // ISR para MAX
-
-    /* 3. Inicia movimento */
+void Mover_Frente() {
+    // impede iniciar se já no limite
+    if (softwareLimits && position >= maxPosition) {
+        return;
+    }
+    // reset de aceleração e partida
+    periodoAtual   = PERIODO_INICIAL;
+    contadorPassos = 0;
+    currentDir     = Direcao::FRENTE;
+    dirPin         = 0;
+    enablePin      = 0;
     startTicker();
 }
 
+void Mover_Tras() {
+    if (softwareLimits && position <= minPosition) {
+        return;
+    }
+    periodoAtual   = PERIODO_INICIAL;
+    contadorPassos = 0;
+    currentDir     = Direcao::TRAS;
+    dirPin         = 1;
+    enablePin      = 0;
+    startTicker();
+}
 
+void Parar_Movimento() {
+    stopTicker();
+    enablePin = 1;
+}
 
+void Referenciamento() {
+    Parar_Movimento();
+    homed          = false;
+    softwareLimits = false;
+    position       = 0;
+    minPosition    = 0;
+    maxPosition    = 0;
 
-/* =========================================================== */
+    // 1) bate no MIN
+    Mover_Tras();
+    while (!limitSwitchMin.read()) { ThisThread::sleep_for(1ms); }
+    Parar_Movimento();
+
+    // 2) sai do MIN → define 0
+    Mover_Frente();
+    while (limitSwitchMin.read())  { ThisThread::sleep_for(1ms); }
+    Parar_Movimento();
+    position    = 0;
+    minPosition = 0;
+
+    // 3) bate no MAX
+    Mover_Frente();
+    while (!limitSwitchMax.read()) { ThisThread::sleep_for(1ms); }
+    Parar_Movimento();
+    maxPosition = position;
+
+    // 4) sai do MAX
+    Mover_Tras();
+    while (limitSwitchMax.read())  { ThisThread::sleep_for(1ms); }
+    Parar_Movimento();
+
+    softwareLimits = true;
+    homed          = true;
+}
+
 int main() {
-    
-    referenciar();
+    // pull-downs nos botões e fins de curso
+    btnStartRef.   mode(PullDown);
+    btnMoveFwd.    mode(PullDown);
+    btnMoveBwd.    mode(PullDown);
+    limitSwitchMin.mode(PullDown);
+    limitSwitchMax.mode(PullDown);
 
-    /* --- espera homing terminar --- */
-    while (state != HomingState::FINISHED) {
-        ThisThread::sleep_for(5ms);
+    // aguarda homing
+    while (!btnStartRef.read()) {
+        ThisThread::sleep_for(10ms);
     }
+    Referenciamento();
 
-    /* --- LOOP VAI-E-VEM CONTÍNUO --- */
+    // controle manual com borda de botão
     while (true) {
-        if (!tickerOn) {                // bateu limite → inverte sentido
-            dirY = !dirY;
-            enY  = 0;
-            startTicker();
+        bool fwd = homed && btnMoveFwd.read();
+        bool bwd = homed && btnMoveBwd.read();
+
+        if (fwd && !lastFwdState) {
+            Mover_Frente();
         }
-        ThisThread::sleep_for(5ms);
+        else if (bwd && !lastBwdState) {
+            Mover_Tras();
+        }
+        else if (!fwd && !bwd && tickerRunning) {
+            Parar_Movimento();
+        }
+
+        lastFwdState = fwd;
+        lastBwdState = bwd;
+
+        ThisThread::sleep_for(10ms);
     }
 }
-
