@@ -1,30 +1,139 @@
 /*
-InterruptIn button(PC_13);      // Botão de usuário
-DigitalOut pipetteControl(PA_5);        // Saída que aciona o relé da pipeta (defina o pino conforme a sua montagem)
-DigitalOut ledIndicator(LED1);          // LED para feedback visual
+/* ==============================================================
+ *  Controle de 3 eixos (X, Y, Z) │ homing simultâneo + soft-limits
+ * ============================================================*/
+#include "mbed.h"
+#include "pinos.h"
 
-// Função callback chamada na borda de subida do botão
-void buttonRiseCallback() {
-    // Gera um pulso de 50ms para acionar o relé da pipeta.
-    // Conforme os slides, o relé é acionado com nível lógico "0".
-    pipetteControl = 0;              // Ativa o relé (acionamento)
-    ThisThread::sleep_for(50ms);       // Duração do pulso (50 ms) – ajuste conforme necessário
-    pipetteControl = 1;              // Desativa o relé
+constexpr auto STEP_PERIOD = 1ms;
+enum class HomingState { TO_MIN, TO_MAX, FINISHED };
+
+struct Axis {
+    /* --- pinos de hardware --- */
+    DigitalOut  step;
+    DigitalOut  dir;
+    DigitalOut  en;
+    InterruptIn fdcMin;
+    InterruptIn fdcMax;
+
+    /* --- estado --- */
+    volatile int32_t steps{0};
+    int32_t travelSteps{0};
+    int32_t limitMin{0};
+    int32_t limitMax{0};
+    volatile bool   limitsActive{false};
+    volatile HomingState state{HomingState::TO_MIN};
+
+    /* --- tempo --- */
+    Ticker clk;
+    volatile bool tickerOn{false};
+
+    Axis(PinName pStep, PinName pDir, PinName pEn,
+         PinName pFdcMin, PinName pFdcMax) :
+        step(pStep), dir(pDir), en(pEn,1),
+        fdcMin(pFdcMin), fdcMax(pFdcMax) {}
+};
+
+/* ---------- instâncias ---------- */
+Axis axX(MOTOR_X, DIR_X, EN_X, FDC_XDWN, FDC_XUP);
+Axis axY(MOTOR_Y, DIR_Y, EN_Y, FDC_YDWN, FDC_YUP);
+Axis axZ(MOTOR_Z, DIR_Z, EN_Z, FDC_ZDWN, FDC_ZUP);
+
+/* utilidades */
+void stopTicker(Axis& a){ a.clk.detach(); a.tickerOn=false; }
+void startTicker(Axis& a, Callback<void()> cb){ a.clk.attach(cb, STEP_PERIOD); a.tickerOn=true; }
+
+/* --------- STEP ISRs (um por eixo) --------- */
+void stepISR_X(){ axX.step=!axX.step; if(axX.step){ axX.steps+=(axX.dir?-1:1);
+    if(axX.limitsActive &&
+       ((axX.dir==0&&axX.steps>=axX.limitMax)||(axX.dir==1&&axX.steps<=axX.limitMin))){
+        stopTicker(axX); axX.en=1; }}}
+
+void stepISR_Y(){ axY.step=!axY.step; if(axY.step){ axY.steps+=(axY.dir?-1:1);
+    if(axY.limitsActive &&
+       ((axY.dir==0&&axY.steps>=axY.limitMax)||(axY.dir==1&&axY.steps<=axY.limitMin))){
+        stopTicker(axY); axY.en=1; }}}
+
+void stepISR_Z(){ axZ.step=!axZ.step; if(axZ.step){ axZ.steps+=(axZ.dir?-1:1);
+    if(axZ.limitsActive &&
+       ((axZ.dir==0&&axZ.steps>=axZ.limitMax)||(axZ.dir==1&&axZ.steps<=axZ.limitMin))){
+        stopTicker(axZ); axZ.en=1; }}}
+
+/* --------- ISRs de fim-de-curso --------- */
+void reachedMax(Axis&);
+
+/* genérico MIN */
+void reachedMin(Axis& a, void (*maxISR)(), void (*stepISR)()){
+    stopTicker(a); a.en=1; a.steps=0;
+    a.fdcMin.rise(NULL);            // desarma MIN
+    a.dir=0; a.en=0;                // volta para MAX
+    a.state=HomingState::TO_MAX;
+    a.fdcMax.rise(maxISR);          // agora espera MAX
+    startTicker(a, stepISR);
 }
 
-int main(void) {
-    // Configuração inicial: sinal de controle em estado inativo (1 = desacionado) e LED apagado
-    pipetteControl = 1;
-    ledIndicator = 0;
+/* wrappers específicos */
+void reachedMin_X(){ reachedMin(axX, reachedMax_X, stepISR_X); }
+void reachedMin_Y(){ reachedMin(axY, reachedMax_Y, stepISR_Y); }
+void reachedMin_Z(){ reachedMin(axZ, reachedMax_Z, stepISR_Z); }
 
-    // Configura a interrupção para detectar a borda de subida do botão
-    button.rise(&buttonRiseCallback);
+/* genérico MAX */
+void reachedMax(Axis& a){
+    stopTicker(a); a.en=1;
+    a.travelSteps=a.steps;
+    a.limitMin=0; a.limitMax=a.travelSteps;
+    a.limitsActive=true;
+    a.fdcMax.rise(NULL);
+    a.state=HomingState::FINISHED;
+}
 
-    // Loop principal (fica aguardando interrupções)
-    while (true) {
-        ThisThread::sleep_for(100ms);
+/* wrappers MAX */
+void reachedMax_X(){ reachedMax(axX); }
+void reachedMax_Y(){ reachedMax(axY); }
+void reachedMax_Z(){ reachedMax(axZ); }
+
+/* --------- Homing de um eixo --------- */
+void referenciar(Axis& a,
+                 Callback<void()> minISR,
+                 Callback<void()> maxISR,
+                 Callback<void()> stepISR){
+    stopTicker(a);
+    a.steps=0; a.travelSteps=0; a.limitsActive=false;
+    a.state=HomingState::TO_MIN;
+    a.dir=1; a.en=0;                // vai em direção ao MIN
+    a.fdcMin.rise(minISR);
+    a.fdcMax.rise(maxISR);
+    startTicker(a, stepISR);
+}
+
+/* --------- Homing simultâneo --------- */
+void homingAllSimultaneous(){
+    referenciar(axX, reachedMin_X, reachedMax_X, stepISR_X);
+    referenciar(axY, reachedMin_Y, reachedMax_Y, stepISR_Y);
+    referenciar(axZ, reachedMin_Z, reachedMax_Z, stepISR_Z);
+
+    /* espera os três terminarem */
+    while(!(axX.state==HomingState::FINISHED &&
+            axY.state==HomingState::FINISHED &&
+            axZ.state==HomingState::FINISHED)){
+        ThisThread::sleep_for(5ms);
     }
 }
+
+/* ============================================================ */
+int main(){
+    homingAllSimultaneous();         // agora em paralelo 🚀
+
+    /* --- loop vai-e-vem contínuo --- */
+    while(true){
+        if(!axX.tickerOn){ axX.dir=!axX.dir; axX.en=0; startTicker(axX, stepISR_X); }
+        if(!axY.tickerOn){ axY.dir=!axY.dir; axY.en=0; startTicker(axY, stepISR_Y); }
+        if(!axZ.tickerOn){ axZ.dir=!axZ.dir; axZ.en=0; startTicker(axZ, stepISR_Z); }
+
+        ThisThread::sleep_for(5ms);
+    }
+}
+
 
 
 
