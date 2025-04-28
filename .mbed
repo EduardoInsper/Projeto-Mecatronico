@@ -1,3 +1,5 @@
 ROOT=.
 TARGET=NUCLEO_F103RB
 TARGET_CODE=0700
+DEVICE_ID[/home/studio/workspace/Projeto-Mecatronico]=066FFF525254667867244244
+DEVICE_TYPE[/home/studio/workspace/Projeto-Mecatronico]=connected

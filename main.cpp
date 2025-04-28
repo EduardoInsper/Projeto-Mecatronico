@@ -17,10 +17,10 @@ static constexpr PinName BTN_MOVE_FWD    = PC_3;         // move frente enquanto
 static constexpr PinName BTN_MOVE_BWD    = PA_15;        // move trás enquanto pressionado  
 
 // ==== PARÂMETROS DE VELOCIDADE ====  
-static constexpr microseconds PERIODO_INICIAL      {1000};  // 1 ms  
-static constexpr microseconds PERIODO_MINIMO       { 200};  // 0,2 ms (velocidade máxima)  
-static constexpr int          PASSOS_PARA_ACELERAR { 250};  
-static constexpr microseconds REDUCAO_PERIOD       { 100};  // 0,1 ms  
+static constexpr microseconds PERIODO_INICIAL      {300};  // 0.3 ms  
+static constexpr microseconds PERIODO_MINIMO       { 60};  // 0,2 ms (velocidade máxima)  
+static constexpr int          PASSOS_PARA_ACELERAR { 50};  
+static constexpr microseconds REDUCAO_PERIOD       { 10};  // 0,01 ms  
 
 // ==== TIPOS AUXILIARES ====  
 enum class Direcao { FRENTE, TRAS };
