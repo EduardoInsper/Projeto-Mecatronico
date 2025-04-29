@@ -1,217 +1,260 @@
 #include "mbed.h"
 #include "pinos.h"
 #include <chrono>
+#include <cmath>
 
 using namespace std::chrono;
+constexpr float PI = 3.14159265f;
 
-// ==== PINOS ====  
-static constexpr PinName PINO_STEP       = MOTOR_Y;      // pulso de step  
-static constexpr PinName PINO_DIR        = DIR_Y;        // direção: 0=frente→MAX, 1=trás→MIN  
-static constexpr PinName PINO_ENABLE     = EN_Y;         // low = driver habilitado  
+// — Identificadores de eixos
+enum MotorId { MotorX = 0, MotorY = 1, MotorZ = 2, MotorCount };
 
-static constexpr PinName FDC_MIN_PIN     = FDC_YDWN;     // fim-de-curso MIN (ativo HIGH)  
-static constexpr PinName FDC_MAX_PIN     = FDC_YUP;      // fim-de-curso MAX (ativo HIGH)  
+// — Pinos por eixo (X e Y ativos, Z desativado)
+static constexpr PinName STEP_PIN[MotorCount]    = { MOTOR_X,   MOTOR_Y,  NC };
+static constexpr PinName DIR_PIN[MotorCount]     = { DIR_X,     DIR_Y,    NC };
+static constexpr PinName ENABLE_PIN[MotorCount]  = { EN_X,      EN_Y,     NC };
+static constexpr PinName FDC_MIN_PIN[MotorCount] = { FDC_XDWN,  FDC_YDWN, NC };
+static constexpr PinName FDC_MAX_PIN[MotorCount] = { FDC_XUP,   FDC_YUP,  NC };
 
-static constexpr PinName BTN_START_REF   = PB_13;        // inicia homing  
-static constexpr PinName BTN_MOVE_FWD    = PC_3;         // move frente enquanto pressionado  
-static constexpr PinName BTN_MOVE_BWD    = PA_15;        // move trás enquanto pressionado  
+// — Parâmetros de velocidade
+static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 800us, 800us, 800us };
+static constexpr microseconds PERIODO_MINIMO[MotorCount]  = { 225us, 175us, 175us };
+static constexpr int          PASSOS_PARA_ACELERAR       = 25;
+static constexpr microseconds REDUCAO_PERIODO[MotorCount] = { 25us, 25us, 25us };
 
-// ==== PARÂMETROS DE VELOCIDADE ====  
-static constexpr microseconds PERIODO_INICIAL      {300};  // 0.3 ms  
-static constexpr microseconds PERIODO_MINIMO       { 60};  // 0,2 ms (velocidade máxima)  
-static constexpr int          PASSOS_PARA_ACELERAR { 50};  
-static constexpr microseconds REDUCAO_PERIOD       { 10};  // 0,01 ms  
+// — Raio de fuso (cm) para conversão passos→cm
+static constexpr float DIAMETRO_FUSO[MotorCount] = {16.0f, 14.0f, 16.0f};
+static constexpr float RFUSO_CM[MotorCount] = {
+    DIAMETRO_FUSO[0]/2.0f/10.0f,
+    DIAMETRO_FUSO[1]/2.0f/10.0f,
+    DIAMETRO_FUSO[2]/2.0f/10.0f
+};
+float RFuso[MotorCount] = { RFUSO_CM[0], RFUSO_CM[1], RFUSO_CM[2] };
 
-// ==== TIPOS AUXILIARES ====  
-enum class Direcao { FRENTE, TRAS };
+// — Objetos de hardware por eixo
+DigitalOut* stepOut[MotorCount];
+DigitalOut* dirOut[MotorCount];
+DigitalOut* enableOut[MotorCount];
+DigitalIn*  endMin[MotorCount];
+DigitalIn*  endMax[MotorCount];
+Ticker      ticker[MotorCount];
 
-// ==== OBJETOS MBED ====  
-DigitalOut   stepPin        (PINO_STEP,     0);
-DigitalOut   dirPin         (PINO_DIR,      0);
-DigitalOut   enablePin      (PINO_ENABLE,   1);
+// — Estado de cada eixo
+volatile int32_t   position[MotorCount]    = {0,0,0};
+int32_t            minPosition[MotorCount] = {0,0,0};
+int32_t            maxPosition[MotorCount] = {0,0,0};
+bool               limitsOn[MotorCount]    = {false,false,false};
+volatile bool      tickerOn[MotorCount]    = {false,false,false};
+int                dirState[MotorCount]    = {0,0,0};  // 0→frente,1→trás
+microseconds       periodCur[MotorCount]   = {
+    PERIODO_INICIAL[0],
+    PERIODO_INICIAL[1],
+    PERIODO_INICIAL[2]
+};
+int                stepCount[MotorCount]   = {0,0,0};
 
-DigitalIn    limitSwitchMin (FDC_MIN_PIN);
-DigitalIn    limitSwitchMax (FDC_MAX_PIN);
+// — Protótipos
+void stepISR(int id);
+void startTicker(int id);
+void stopTicker(int id);
+void Mover_Frente(int id);
+void Mover_Tras(int id);
+void Parar_Mov(int id);
+void HomingTodos();
+float getPositionCm(int id);
+void manualControl();
 
-DigitalIn    btnStartRef    (BTN_START_REF);
-DigitalIn    btnMoveFwd     (BTN_MOVE_FWD);
-DigitalIn    btnMoveBwd     (BTN_MOVE_BWD);
-
-Ticker       stepTicker;
-
-// ==== ESTADO GLOBAL ====  
-volatile int32_t   position       = 0;
-int32_t            minPosition    = 0;
-int32_t            maxPosition    = 0;
-bool               softwareLimits = false;
-volatile Direcao   currentDir     = Direcao::FRENTE;
-volatile bool      tickerRunning  = false;
-bool               homed          = false;
-
-// aceleração  
-microseconds periodoAtual  = PERIODO_INICIAL;
-int          contadorPassos = 0;
-
-// estados anteriores dos botões (para borda de subida)
-bool lastFwdState = false;
-bool lastBwdState = false;
-
-// —— Protótipos ——
-void stepISR();
-void startTicker();
-void stopTicker();
-void Mover_Frente();
-void Mover_Tras();
-void Parar_Movimento();
-void Referenciamento();
-
-
-// ==== IMPLEMENTAÇÃO ====  
-
-void stepISR() {
-    // **Software-limits guard**: não gera novos pulsos além dos limites
-    if (softwareLimits) {
-        if (currentDir == Direcao::FRENTE && position >= maxPosition) {
-            stopTicker();
-            return;
-        }
-        if (currentDir == Direcao::TRAS && position <= minPosition) {
-            stopTicker();
-            return;
-        }
-    }
-
-    // gera pulso
-    stepPin = !stepPin;
-    if (!stepPin) return;  // conta só na borda de subida
-
-    // 1) atualiza posição
-    if (currentDir == Direcao::FRENTE)  position++;
-    else                                 position--;
-
-    // 2) soft-limits no ISR já feito acima
-
-    // 3) aceleração a cada N passos
-    if (++contadorPassos >= PASSOS_PARA_ACELERAR) {
-        contadorPassos = 0;
-        if (periodoAtual > PERIODO_MINIMO) {
-            periodoAtual -= REDUCAO_PERIOD;
-            stepTicker.attach(&stepISR, periodoAtual);
-            tickerRunning = true;
-        }
-    }
-}
-
-void startTicker() {
-    if (!tickerRunning) {
-        stepTicker.attach(&stepISR, periodoAtual);
-        tickerRunning = true;
-    }
-}
-
-void stopTicker() {
-    stepTicker.detach();
-    tickerRunning = false;
-}
-
-void Mover_Frente() {
-    // impede iniciar se já no limite
-    if (softwareLimits && position >= maxPosition) {
-        return;
-    }
-    // reset de aceleração e partida
-    periodoAtual   = PERIODO_INICIAL;
-    contadorPassos = 0;
-    currentDir     = Direcao::FRENTE;
-    dirPin         = 0;
-    enablePin      = 0;
-    startTicker();
-}
-
-void Mover_Tras() {
-    if (softwareLimits && position <= minPosition) {
-        return;
-    }
-    periodoAtual   = PERIODO_INICIAL;
-    contadorPassos = 0;
-    currentDir     = Direcao::TRAS;
-    dirPin         = 1;
-    enablePin      = 0;
-    startTicker();
-}
-
-void Parar_Movimento() {
-    stopTicker();
-    enablePin = 1;
-}
-
-void Referenciamento() {
-    Parar_Movimento();
-    homed          = false;
-    softwareLimits = false;
-    position       = 0;
-    minPosition    = 0;
-    maxPosition    = 0;
-
-    // 1) bate no MIN
-    Mover_Tras();
-    while (!limitSwitchMin.read()) { ThisThread::sleep_for(1ms); }
-    Parar_Movimento();
-
-    // 2) sai do MIN → define 0
-    Mover_Frente();
-    while (limitSwitchMin.read())  { ThisThread::sleep_for(1ms); }
-    Parar_Movimento();
-    position    = 0;
-    minPosition = 0;
-
-    // 3) bate no MAX
-    Mover_Frente();
-    while (!limitSwitchMax.read()) { ThisThread::sleep_for(1ms); }
-    Parar_Movimento();
-    maxPosition = position;
-
-    // 4) sai do MAX
-    Mover_Tras();
-    while (limitSwitchMax.read())  { ThisThread::sleep_for(1ms); }
-    Parar_Movimento();
-
-    softwareLimits = true;
-    homed          = true;
+// — Converte passos em centímetros
+float getPositionCm(int id) {
+    return (2.0f * PI * RFuso[id] / 400.0f) * float(position[id]);
 }
 
 int main() {
-    // pull-downs nos botões e fins de curso
-    btnStartRef.   mode(PullDown);
-    btnMoveFwd.    mode(PullDown);
-    btnMoveBwd.    mode(PullDown);
-    limitSwitchMin.mode(PullDown);
-    limitSwitchMax.mode(PullDown);
-
-    // aguarda homing
-    while (!btnStartRef.read()) {
-        ThisThread::sleep_for(10ms);
+    // inicializa GPIO para X e Y
+    for (int i = 0; i < MotorCount; ++i) {
+        stepOut[i]   = new DigitalOut(STEP_PIN[i],    0);
+        dirOut[i]    = new DigitalOut(DIR_PIN[i],     0);
+        enableOut[i] = new DigitalOut(ENABLE_PIN[i],  1);  // 1 = driver DESLIGADO
+        endMin[i]    = new DigitalIn(FDC_MIN_PIN[i],  PullDown);
+        endMax[i]    = new DigitalIn(FDC_MAX_PIN[i],  PullDown);
     }
-    Referenciamento();
 
-    // controle manual com borda de botão
+    // botões manuais e homing (já definidos em pinos.h)
+    DigitalIn btnXup (BTN_XUP,  PullDown),
+              btnXdn (BTN_XDWN, PullDown),
+              btnYup (BTN_YUP,  PullDown),
+              btnYdn (BTN_YDWN, PullDown),
+              btnRef (BTN_ENTER,PullDown);
+
+    // 1) Antes de referenciar, movimentação manual liberada
+    while (!btnRef.read()) {
+        manualControl();
+    }
+
+    // 2) Ao apertar o botão de homing, ambos se movem simultaneamente
+    HomingTodos();
+
+    // 3) Depois de homing, manual continua disponível
     while (true) {
-        bool fwd = homed && btnMoveFwd.read();
-        bool bwd = homed && btnMoveBwd.read();
-
-        if (fwd && !lastFwdState) {
-            Mover_Frente();
-        }
-        else if (bwd && !lastBwdState) {
-            Mover_Tras();
-        }
-        else if (!fwd && !bwd && tickerRunning) {
-            Parar_Movimento();
-        }
-
-        lastFwdState = fwd;
-        lastBwdState = bwd;
-
-        ThisThread::sleep_for(10ms);
+        manualControl();
     }
+}
+
+// — Controle manual: chama Mover_Frente/Tras para aceleração
+void manualControl() {
+    static DigitalIn btnXup(BTN_XUP,  PullDown),
+                     btnXdn(BTN_XDWN, PullDown),
+                     btnYup(BTN_YUP,  PullDown),
+                     btnYdn(BTN_YDWN, PullDown);
+
+    bool xup = btnXup.read(), xdn = btnXdn.read();
+    bool yup = btnYup.read(), ydn = btnYdn.read();
+
+    // eixo X
+    if (xup && !xdn) {
+        if (!tickerOn[MotorX] || dirState[MotorX] != 0)
+            Mover_Frente(MotorX);
+    } else if (xdn && !xup) {
+        if (!tickerOn[MotorX] || dirState[MotorX] != 1)
+            Mover_Tras(MotorX);
+    } else if (tickerOn[MotorX]) {
+        Parar_Mov(MotorX);
+    }
+
+    // eixo Y
+    if (yup && !ydn) {
+        if (!tickerOn[MotorY] || dirState[MotorY] != 0)
+            Mover_Frente(MotorY);
+    } else if (ydn && !yup) {
+        if (!tickerOn[MotorY] || dirState[MotorY] != 1)
+            Mover_Tras(MotorY);
+    } else if (tickerOn[MotorY]) {
+        Parar_Mov(MotorY);
+    }
+
+    ThisThread::sleep_for(10ms);
+}
+
+// — ISR de STEP: gera pulso, aplica limites e acelera
+void stepISR(int id) {
+    if (limitsOn[id]) {
+        if ((dirState[id]==0 && position[id]>=maxPosition[id]) ||
+            (dirState[id]==1 && position[id]<=minPosition[id])) {
+            stopTicker(id);
+            return;
+        }
+    }
+
+    (*stepOut[id]) = !(*stepOut[id]);  // toggle STEP
+    if (!(*stepOut[id])) return;       // só conta na subida
+    position[id] += (dirState[id]==0 ? +1 : -1);
+
+    if (++stepCount[id] >= PASSOS_PARA_ACELERAR) {
+        stepCount[id] = 0;
+        if (periodCur[id] > PERIODO_MINIMO[id]) {
+            periodCur[id] -= REDUCAO_PERIODO[id];
+            // reconfigura ticker com lambda
+            ticker[id].attach([id](){ stepISR(id); }, periodCur[id]);
+            tickerOn[id] = true;
+        }
+    }
+}
+
+// liga ticker para eixo id
+void startTicker(int id) {
+    if (!tickerOn[id]) {
+        ticker[id].attach([id](){ stepISR(id); }, periodCur[id]);
+        tickerOn[id] = true;
+    }
+}
+
+// desliga ticker para eixo id
+void stopTicker(int id) {
+    ticker[id].detach();
+    tickerOn[id] = false;
+}
+
+// inicia movimento acelerado para frente (MAX)
+void Mover_Frente(int id) {
+    if (limitsOn[id] && position[id]>=maxPosition[id]) return;
+    periodCur[id]    = PERIODO_INICIAL[id];
+    stepCount[id]    = 0;
+    dirState[id]     = 0;
+    (*dirOut[id])    = 0;
+    (*enableOut[id]) = 0;  // habilita driver
+    startTicker(id);
+}
+
+// inicia movimento acelerado para trás (MIN)
+void Mover_Tras(int id) {
+    if (limitsOn[id] && position[id]<=minPosition[id]) return;
+    periodCur[id]    = PERIODO_INICIAL[id];
+    stepCount[id]    = 0;
+    dirState[id]     = 1;
+    (*dirOut[id])    = 1;
+    (*enableOut[id]) = 0;
+    startTicker(id);
+}
+
+// para eixo e desabilita driver
+void Parar_Mov(int id) {
+    ticker[id].detach();
+    tickerOn[id]    = false;
+    (*enableOut[id])= 1;
+}
+
+// homing simultâneo X+Y, cada um só com seus sensores
+void HomingTodos() {
+    // reset inicial
+    for (int i : {MotorX, MotorY}) {
+        Parar_Mov(i);
+        limitsOn[i]     = false;
+        position[i]     = 0;
+        minPosition[i]  = 0;
+        maxPosition[i]  = 0;
+    }
+
+    // 1) ambos vão para MIN ao mesmo tempo
+    Mover_Tras(MotorX);
+    Mover_Tras(MotorY);
+    while (tickerOn[MotorX] || tickerOn[MotorY]) {
+        if (tickerOn[MotorX] && endMin[MotorX]->read()) Parar_Mov(MotorX);
+        if (tickerOn[MotorY] && endMin[MotorY]->read()) Parar_Mov(MotorY);
+        ThisThread::sleep_for(1ms);
+    }
+
+    // 2) escapam MIN e zeram
+    Mover_Frente(MotorX);
+    Mover_Frente(MotorY);
+    while (tickerOn[MotorX] || tickerOn[MotorY]) {
+        if (tickerOn[MotorX] && endMin[MotorX]->read()) Parar_Mov(MotorX);
+        if (tickerOn[MotorY] && endMin[MotorY]->read()) Parar_Mov(MotorY);
+        ThisThread::sleep_for(1ms);
+    }
+    position[MotorX] = 0;
+    position[MotorY] = 0;
+
+    // 3) ambos vão para MAX
+    Mover_Frente(MotorX);
+    Mover_Frente(MotorY);
+    while (tickerOn[MotorX] || tickerOn[MotorY]) {
+        if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
+        if (tickerOn[MotorY] && endMax[MotorY]->read()) Parar_Mov(MotorY);
+        ThisThread::sleep_for(1ms);
+    }
+    maxPosition[MotorX] = position[MotorX];
+    maxPosition[MotorY] = position[MotorY];
+
+    // 4) escapam MAX
+    Mover_Tras(MotorX);
+    Mover_Tras(MotorY);
+    while (tickerOn[MotorX] || tickerOn[MotorY]) {
+        if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
+        if (tickerOn[MotorY] && endMax[MotorY]->read()) Parar_Mov(MotorY);
+        ThisThread::sleep_for(1ms);
+    }
+
+    // 5) ativa limites de software
+    limitsOn[MotorX] = true;
+    limitsOn[MotorY] = true;
 }

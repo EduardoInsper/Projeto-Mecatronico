@@ -4,10 +4,10 @@
 //======================================================================
 //                     SENSORES DE FIM DE CURSO  
 //======================================================================
-#define FDC_YUP D14        // Sensor de fim de curso no sentido "para cima" do eixo Y
-#define FDC_YDWN D11       // Sensor de fim de curso no sentido "para baixo" do eixo Y
-#define FDC_XUP PC_9       // Sensor de fim de curso no sentido "para cima" do eixo X         
-#define FDC_XDWN PB_5      // Sensor de fim de curso no sentido "para baixo" do eixo X        
+#define FDC_YUP D14      // Sensor de fim de curso no sentido "para cima" do eixo Y
+#define FDC_YDWN D13      // Sensor de fim de curso no sentido "para baixo" do eixo Y
+#define FDC_XUP D12    // Sensor de fim de curso no sentido "para cima" do eixo X         
+#define FDC_XDWN D11     // Sensor de fim de curso no sentido "para baixo" do eixo X        
 #define FDC_ZUP PC_6       // Sensor de fim de curso no sentido "para cima" do eixo Z
 #define FDC_ZDWN PC_10     // Sensor de fim de curso no sentido "para baixo" do eixo Z
 
