@@ -17,8 +17,8 @@ static constexpr PinName FDC_MIN_PIN[MotorCount] = { FDC_XDWN,  FDC_YDWN, NC };
 static constexpr PinName FDC_MAX_PIN[MotorCount] = { FDC_XUP,   FDC_YUP,  NC };
 
 // — Parâmetros de velocidade
-static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 800us, 800us, 800us };
-static constexpr microseconds PERIODO_MINIMO  [MotorCount] = { 200us, 175us, 175us };
+static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1200us, 800us, 800us };
+static constexpr microseconds PERIODO_MINIMO  [MotorCount] = { 150us, 175us, 175us };
 static constexpr int          PASSOS_PARA_ACELERAR       = 25;
 static constexpr microseconds REDUCAO_PERIODO[MotorCount] = { 25us,  25us,  25us };
 
