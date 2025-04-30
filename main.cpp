@@ -18,7 +18,7 @@ static constexpr PinName FDC_MAX_PIN[MotorCount] = { FDC_XUP,   FDC_YUP,  NC };
 
 // — Parâmetros de velocidade
 static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 800us, 800us, 800us };
-static constexpr microseconds PERIODO_MINIMO  [MotorCount] = { 225us, 175us, 175us };
+static constexpr microseconds PERIODO_MINIMO  [MotorCount] = { 200us, 175us, 175us };
 static constexpr int          PASSOS_PARA_ACELERAR       = 25;
 static constexpr microseconds REDUCAO_PERIODO[MotorCount] = { 25us,  25us,  25us };
 
@@ -91,7 +91,7 @@ int main() {
         manualControl();
     }
 
-    // 2) Homing simplificado
+    // 2) Homing: X ao fim UP, Y ao fim DOWN
     HomingTodos();
 
     // 3) Depois do homing, manual continua disponível
@@ -183,7 +183,7 @@ void Mover_Frente(int id) {
     periodCur[id] = PERIODO_INICIAL[id];
     stepCount[id] = 0;
 
-    // direção unificada para todos os eixos
+    // direção normal para todos
     dirState[id]  = 0;
     (*dirOut[id]) = 0;
 
@@ -199,7 +199,7 @@ void Mover_Tras(int id) {
     periodCur[id] = PERIODO_INICIAL[id];
     stepCount[id] = 0;
 
-    // direção unificada para todos os eixos
+    // direção normal para todos
     dirState[id]  = 1;
     (*dirOut[id]) = 1;
 
@@ -217,16 +217,16 @@ void HomingTodos() {
         Parar_Mov(i);
     }
 
-    // move ambos até fim mínimo
-    Mover_Tras(MotorX);
-    Mover_Tras(MotorY);
+    // move X até o fim de curso MAX e Y até o fim de curso MIN simultaneamente
+    Mover_Frente(MotorX);
+    Mover_Tras (MotorY);
     while (tickerOn[MotorX] || tickerOn[MotorY]) {
-        if (tickerOn[MotorX] && endMin[MotorX]->read()) Parar_Mov(MotorX);
+        if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
         if (tickerOn[MotorY] && endMin[MotorY]->read()) Parar_Mov(MotorY);
         ThisThread::sleep_for(1ms);
     }
 
-    // zera posição
+    // zera posição em ambos: X = 0 no fim MAX, Y = 0 no fim MIN
     position[MotorX] = 0;
     position[MotorY] = 0;
 }
