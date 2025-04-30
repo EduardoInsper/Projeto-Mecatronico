@@ -1,232 +1,190 @@
+// main.cpp
+
 #include "mbed.h"
+#include "TextLCD.h"
 #include "pinos.h"
+#include "Pipetadora.h"
 #include <chrono>
-#include <cmath>
 
 using namespace std::chrono;
-constexpr float PI = 3.14159265f;
 
-// — Identificadores de eixos
-enum MotorId { MotorX = 0, MotorY = 1, MotorZ = 2, MotorCount };
+// I2C LCD setup
+I2C        i2c_lcd(D14, D15);
+TextLCD_I2C lcd(&i2c_lcd, 0x7E, TextLCD::LCD20x4);
 
-// — Pinos por eixo (X e Y ativos, Z desativado)
-static constexpr PinName STEP_PIN[MotorCount]    = { MOTOR_X,   MOTOR_Y,  NC };
-static constexpr PinName DIR_PIN[MotorCount]     = { DIR_X,     DIR_Y,    NC };
-static constexpr PinName ENABLE_PIN[MotorCount]  = { EN_X,      EN_Y,     NC };
-static constexpr PinName FDC_MIN_PIN[MotorCount] = { FDC_XDWN,  FDC_YDWN, NC };
-static constexpr PinName FDC_MAX_PIN[MotorCount] = { FDC_XUP,   FDC_YUP,  NC };
+// Buttons
+InterruptIn buttonUp   (BTN_XUP,   PullDown);
+InterruptIn buttonDown (BTN_XDWN,  PullDown);
+InterruptIn buttonEnter(BTN_ENTER, PullDown);
+InterruptIn buttonBack (BTN_BACK,  PullDown);  // BTN_BACK is defined as PB_14 in pinos.h
 
-// — Parâmetros de velocidade
-static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1200us, 800us, 800us };
-static constexpr microseconds PERIODO_MINIMO  [MotorCount] = { 150us, 175us, 175us };
-static constexpr int          PASSOS_PARA_ACELERAR       = 25;
-static constexpr microseconds REDUCAO_PERIODO[MotorCount] = { 25us,  25us,  25us };
+// Debounce timer
+static constexpr auto debounceTime = 200ms;
+Timer debounceTimer;
 
-// — Raio de fuso (cm) para conversão passos→cm
-static constexpr float DIAMETRO_FUSO[MotorCount] = { 16.0f, 14.0f, 16.0f };
-static constexpr float RFUSO_CM    [MotorCount] = {
-    DIAMETRO_FUSO[0]/2.0f/10.0f,
-    DIAMETRO_FUSO[1]/2.0f/10.0f,
-    DIAMETRO_FUSO[2]/2.0f/10.0f
+// Menu state
+bool      inSubmenu = false;
+int       cursor    = 0;
+volatile bool upFlag    = false;
+volatile bool downFlag  = false;
+volatile bool enterFlag = false;
+volatile bool backFlag  = false;
+
+// Menu definitions
+enum { MAIN_COUNT = 3, SUB_COUNT = 2 };
+const char* mainMenu[MAIN_COUNT] = {
+    "Referenciamento",
+    "Movimentacao Manual",
+    "Pipetadora"
 };
-float RFuso[MotorCount] = {
-    RFUSO_CM[0],
-    RFUSO_CM[1],
-    RFUSO_CM[2]
+const char* subMenu[SUB_COUNT] = {
+    "Placeholder A",
+    "Placeholder B"
 };
 
-// — Objetos de hardware por eixo
-DigitalOut* stepOut  [MotorCount];
-DigitalOut* dirOut   [MotorCount];
-DigitalOut* enableOut[MotorCount];
-DigitalIn*  endMin   [MotorCount];
-DigitalIn*  endMax   [MotorCount];
-Ticker      ticker   [MotorCount];
+// ISR handlers
+void isrUp() {
+    if (debounceTimer.elapsed_time() < debounceTime) return;
+    debounceTimer.reset();
+    upFlag = true;
+}
+void isrDown() {
+    if (debounceTimer.elapsed_time() < debounceTime) return;
+    debounceTimer.reset();
+    downFlag = true;
+}
+void isrEnter() {
+    if (debounceTimer.elapsed_time() < debounceTime) return;
+    debounceTimer.reset();
+    enterFlag = true;
+}
+void isrBack() {
+    if (debounceTimer.elapsed_time() < debounceTime) return;
+    debounceTimer.reset();
+    backFlag = true;
+}
 
-// — Estado de cada eixo
-volatile int32_t position  [MotorCount]    = {0,0,0};
-volatile bool    tickerOn  [MotorCount]    = {false,false,false};
-int              dirState  [MotorCount]    = {0,0,0}; // 0→frente, 1→trás
-microseconds     periodCur [MotorCount]    = {
-    PERIODO_INICIAL[0],
-    PERIODO_INICIAL[1],
-    PERIODO_INICIAL[2]
-};
-int              stepCount [MotorCount]    = {0,0,0};
+// Draw initial animated main menu
+void drawMainMenuAnim() {
+    lcd.cls();
+    lcd.locate(5, 1);
+    lcd.printf("Carregando...");
+    ThisThread::sleep_for(500ms);
+    lcd.cls();
+    lcd.locate(3, 0);
+    lcd.printf("MENU PRINCIPAL");
+    for (int i = 0; i < MAIN_COUNT; ++i) {
+        lcd.locate(1, i + 1);
+        lcd.printf("%s", mainMenu[i]);
+    }
+    cursor = 0;
+    lcd.locate(0, 1 + cursor);
+    lcd.putc('>');
+    inSubmenu = false;
+}
 
-// — Protótipos
-void stepISR       (int id);
-void startTicker   (int id);
-void stopTicker    (int id);
-void Mover_Frente  (int id);
-void Mover_Tras    (int id);
-void Parar_Mov     (int id);
-void HomingTodos   ();
-float getPositionCm(int id);
-void manualControl ();
+// Redraw main menu
+void drawMainMenu() {
+    lcd.cls();
+    lcd.locate(3, 0);
+    lcd.printf("MENU PRINCIPAL");
+    for (int i = 0; i < MAIN_COUNT; ++i) {
+        lcd.locate(1, i + 1);
+        lcd.printf("%s", mainMenu[i]);
+    }
+    lcd.locate(0, 1 + cursor);
+    lcd.putc('>');
+}
 
-// — Converte passos em centímetros
-float getPositionCm(int id) {
-    return (2.0f * PI * RFuso[id] / 400.0f) * float(position[id]);
+// Draw Pipetadora submenu
+void drawSubMenu() {
+    lcd.cls();
+    lcd.locate(3, 0);
+    lcd.printf("PIPETADORA");
+    for (int i = 0; i < SUB_COUNT; ++i) {
+        lcd.locate(1, i + 1);
+        lcd.printf("%s", subMenu[i]);
+    }
+    cursor = 0;
+    lcd.locate(0, 1 + cursor);
+    lcd.putc('>');
 }
 
 int main() {
-    // inicializa hardware
-    for (int i = 0; i < MotorCount; ++i) {
-        stepOut  [i] = new DigitalOut(STEP_PIN[i],    0);
-        dirOut   [i] = new DigitalOut(DIR_PIN[i],     0);
-        enableOut[i] = new DigitalOut(ENABLE_PIN[i],  1); // driver desligado
-        endMin   [i] = new DigitalIn (FDC_MIN_PIN[i], PullDown);
-        endMax   [i] = new DigitalIn (FDC_MAX_PIN[i], PullDown);
-    }
+    // Inicializa motores/sensores
+    Pipetadora_InitMotors();
 
-    DigitalIn btnXup (BTN_XUP,   PullDown),
-              btnXdn (BTN_XDWN,  PullDown),
-              btnYup (BTN_YUP,   PullDown),
-              btnYdn (BTN_YDWN,  PullDown),
-              btnRef (BTN_ENTER, PullDown);
+    // Configura botões + debounce
+    debounceTimer.start();
+    buttonUp.fall(&isrUp);
+    buttonDown.fall(&isrDown);
+    buttonEnter.fall(&isrEnter);
+    buttonBack.fall(&isrBack);
 
-    // 1) Antes de referenciar, controle manual liberado
-    while (!btnRef.read()) {
-        manualControl();
-    }
+    // Mostra o menu animado
+    drawMainMenuAnim();
 
-    // 2) Homing: X ao fim UP, Y ao fim DOWN
-    HomingTodos();
-
-    // 3) Depois do homing, manual continua disponível
     while (true) {
-        manualControl();
-    }
-}
-
-void manualControl() {
-    static DigitalIn btnXup(BTN_XUP,  PullDown),
-                     btnXdn(BTN_XDWN, PullDown),
-                     btnYup(BTN_YUP,  PullDown),
-                     btnYdn(BTN_YDWN, PullDown);
-
-    bool xup = btnXup.read(), xdn = btnXdn.read();
-    bool yup = btnYup.read(), ydn = btnYdn.read();
-
-    // — eixo X
-    if (xup && !xdn) {
-        if (!tickerOn[MotorX] || dirState[MotorX] != 0) {
-            Mover_Frente(MotorX);
+        if (upFlag) {
+            upFlag = false;
+            int count = inSubmenu ? SUB_COUNT : MAIN_COUNT;
+            if (cursor > 0) --cursor;
+            (inSubmenu ? drawSubMenu : drawMainMenu)();
         }
-    } else if (xdn && !xup) {
-        if (!tickerOn[MotorX] || dirState[MotorX] != 1) {
-            Mover_Tras(MotorX);
+        if (downFlag) {
+            downFlag = false;
+            int count = inSubmenu ? SUB_COUNT : MAIN_COUNT;
+            if (cursor < count - 1) ++cursor;
+            (inSubmenu ? drawSubMenu : drawMainMenu)();
         }
-    } else if (tickerOn[MotorX]) {
-        Parar_Mov(MotorX);
-    }
-
-    // — eixo Y
-    if (yup && !ydn) {
-        if (!tickerOn[MotorY] || dirState[MotorY] != 0) {
-            Mover_Frente(MotorY);
+        if (enterFlag) {
+            enterFlag = false;
+            if (!inSubmenu) {
+                switch (cursor) {
+                    case 0: // Referenciamento
+                        Pipetadora_Homing();
+                        lcd.cls();
+                        lcd.locate(0,1);
+                        lcd.printf("Homing concluido");
+                        ThisThread::sleep_for(1s);
+                        drawMainMenu();
+                        break;
+                    case 1: // Movimentacao Manual
+                        lcd.cls();
+                        lcd.locate(0,0);
+                        lcd.printf("Modo Manual");
+                        lcd.locate(0,1);
+                        lcd.printf("Back p/ sair");
+                        backFlag = false;
+                        while (!backFlag) {
+                            Pipetadora_ManualControl();
+                        }
+                        backFlag = false;
+                        drawMainMenu();
+                        break;
+                    case 2: // Pipetadora submenu
+                        inSubmenu = true;
+                        cursor = 0;
+                        drawSubMenu();
+                        break;
+                }
+            } else {
+                // ação placeholder no submenu
+                lcd.cls();
+                lcd.locate(0,1);
+                lcd.printf("Selecionou: %s", subMenu[cursor]);
+                ThisThread::sleep_for(1s);
+                drawSubMenu();
+            }
         }
-    } else if (ydn && !yup) {
-        if (!tickerOn[MotorY] || dirState[MotorY] != 1) {
-            Mover_Tras(MotorY);
+        if (backFlag) {
+            backFlag = false;
+            if (inSubmenu) {
+                inSubmenu = false;
+                cursor = 2;  // volta em "Pipetadora"
+                drawMainMenu();
+            }
         }
-    } else if (tickerOn[MotorY]) {
-        Parar_Mov(MotorY);
+        ThisThread::sleep_for(50ms);
     }
-
-    ThisThread::sleep_for(10ms);
-}
-
-void stepISR(int id) {
-    // para se atingir fim de curso físico
-    if ((dirState[id]==0 && endMax[id]->read()) ||
-        (dirState[id]==1 && endMin[id]->read())) {
-        stopTicker(id);
-        return;
-    }
-
-    // gera pulso de step
-    (*stepOut[id]) = !(*stepOut[id]);
-    if (!(*stepOut[id])) return;  // conta só na borda de subida
-
-    // atualiza posição
-    position[id] += (dirState[id]==0 ? +1 : -1);
-
-    // aceleração
-    if (++stepCount[id] >= PASSOS_PARA_ACELERAR) {
-        stepCount[id] = 0;
-        if (periodCur[id] > PERIODO_MINIMO[id]) {
-            periodCur[id] -= REDUCAO_PERIODO[id];
-            ticker[id].attach([id](){ stepISR(id); }, periodCur[id]);
-            tickerOn[id] = true;
-        }
-    }
-}
-
-void startTicker(int id) {
-    ticker[id].attach([id](){ stepISR(id); }, periodCur[id]);
-    tickerOn[id] = true;
-}
-
-void stopTicker(int id) {
-    ticker[id].detach();
-    tickerOn[id] = false;
-    (*enableOut[id]) = 1; // desliga driver
-}
-
-void Mover_Frente(int id) {
-    // bloqueio em fim de curso físico
-    if (endMax[id]->read()) return;
-
-    // reconfigura aceleração
-    periodCur[id] = PERIODO_INICIAL[id];
-    stepCount[id] = 0;
-
-    // direção normal para todos
-    dirState[id]  = 0;
-    (*dirOut[id]) = 0;
-
-    (*enableOut[id]) = 0; // habilita driver
-    startTicker(id);
-}
-
-void Mover_Tras(int id) {
-    // bloqueio em fim de curso físico
-    if (endMin[id]->read()) return;
-
-    // reconfigura aceleração
-    periodCur[id] = PERIODO_INICIAL[id];
-    stepCount[id] = 0;
-
-    // direção normal para todos
-    dirState[id]  = 1;
-    (*dirOut[id]) = 1;
-
-    (*enableOut[id]) = 0; // habilita driver
-    startTicker(id);
-}
-
-void Parar_Mov(int id) {
-    stopTicker(id);
-}
-
-void HomingTodos() {
-    // para movimentos ativos
-    for (int i : { MotorX, MotorY }) {
-        Parar_Mov(i);
-    }
-
-    // move X até o fim de curso MAX e Y até o fim de curso MIN simultaneamente
-    Mover_Frente(MotorX);
-    Mover_Tras (MotorY);
-    while (tickerOn[MotorX] || tickerOn[MotorY]) {
-        if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
-        if (tickerOn[MotorY] && endMin[MotorY]->read()) Parar_Mov(MotorY);
-        ThisThread::sleep_for(1ms);
-    }
-
-    // zera posição em ambos: X = 0 no fim MAX, Y = 0 no fim MIN
-    position[MotorX] = 0;
-    position[MotorY] = 0;
 }

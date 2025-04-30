@@ -26,11 +26,7 @@
 //======================================================================
 #define EMER_2 PA_4      // Botão de emergência
 #define BTN_ENTER PB_13    // Botão para selecionar/confirmar
-
-
-/*
-#define BTN_CANCEL PB_1    // Botão para cancelar a ação
-
+#define BTN_BACK PB_14     // Botão para voltar no menu
 
 //======================================================================
 //                           DISPLAY LCD 
@@ -44,9 +40,6 @@
 //======================================================================
 #define PIPETA PB_2
 
-
-
-*/
 
 //======================================================================
 //                        CONTROLE DOS MOTORES
