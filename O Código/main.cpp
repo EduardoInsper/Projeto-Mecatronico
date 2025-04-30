@@ -106,27 +106,41 @@ int main() {
             if (!inSubmenu) {
                 switch (cursor) {
                     case 0: // Homing
-                        lcd.cls(); lcd.locate(0,1); lcd.printf("...");
+                        lcd.cls();
+                        lcd.locate(0,1);
+                        lcd.printf("Referenciando...");
                         Pipetadora_Homing();
                         lcd.cls();
-                        lcd.locate(0,0); lcd.printf("Referenciamento");
-                        lcd.locate(0,1); lcd.printf("Concluido");
+                        lcd.locate(0,0);
+                        lcd.printf("Referenciamento");
+                        lcd.locate(0,1);
+                        lcd.printf("Concluido");
                         thread_sleep_for(1000);
                         drawMainMenu();
                         break;
+
                     case 1: { // Manual
                         lcd.cls();
                         lcd.locate(0,0); lcd.printf("Modo Manual");
                         lcd.locate(0,1); lcd.printf("Back p/ sair");
                         backFlag = false;
                         while (!backFlag) {
-                            int xs = Pipetadora_GetPositionSteps(0);
-                            int ys = Pipetadora_GetPositionSteps(1);
-                            // aqui a largura foi ajustada para 5 dígitos e a linha é “limpa”
+                            int   xs = Pipetadora_GetPositionSteps(0);
+                            int   ys = Pipetadora_GetPositionSteps(1);
+                            float xc = Pipetadora_GetPositionCm   (0);
+                            float yc = Pipetadora_GetPositionCm   (1);
+
+                            // separar parte inteira e decimal de xc e yc
+                            int xci = (int) xc;
+                            int xcd = (int)((xc - xci)*10);
+                            int yci = (int) yc;
+                            int ycd = (int)((yc - yci)*10);
+
                             lcd.locate(0,2);
-                            lcd.printf("X:%5d   ", xs);
+                            lcd.printf("X:%5d/%2d.%1dcm", xs, xci, xcd);
                             lcd.locate(0,3);
-                            lcd.printf("Y:%5d   ", ys);
+                            lcd.printf("Y:%5d/%2d.%1dcm", ys, yci, ycd);
+
                             Pipetadora_ManualControl();
                             thread_sleep_for(100);
                         }
@@ -134,6 +148,7 @@ int main() {
                         drawMainMenu();
                         break;
                     }
+
                     case 2: // Submenu
                         inSubmenu = true; cursor = 0; drawSubMenu();
                         break;

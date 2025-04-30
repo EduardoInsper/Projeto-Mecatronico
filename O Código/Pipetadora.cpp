@@ -25,7 +25,7 @@ static constexpr microseconds REDUCAO_PERIODO [MotorCount] = {   25us,  25us,  2
 static constexpr int          PASSOS_PARA_ACELERAR      = 25;
 
 // — Passo de fuso (cm) para conversão de posição
-static constexpr float PASSO_FUSO[MotorCount] = { 5.0f, 5.0f, 5.0f };
+static constexpr float PASSO_FUSO[MotorCount] = { 0.5f, 0.5f, 0.5f };
 
 // — Hardware e estado
 static DigitalOut* stepOut   [MotorCount];
@@ -89,7 +89,6 @@ void Pipetadora_ManualControl(void) {
     for (int i = 0; i < MotorCount; ++i) {
         bool up = btnUp[i]->read();
         bool dn = btnDwn[i]->read();
-        // chama Mover_Frente/Mover_Tras para aplicar aceleração
         if      (up && !dn) {
             if (!tickerOn[i] || dirState[i] != 0) Mover_Frente(i);
         } else if (dn && !up) {
@@ -102,7 +101,6 @@ void Pipetadora_ManualControl(void) {
 }
 
 float Pipetadora_GetPositionCm(int id) {
-    // cálculo em double para evitar perda de casas decimais
     double cm = (double)position[id] * (double)PASSO_FUSO[id] / 400.0;
     return (float)cm;
 }
@@ -137,17 +135,16 @@ static void stepISR(int id) {
         return;
     }
 
-    // gera pulso STEP (conta apenas na borda de subida)
+    // gera pulso STEP (toggle)
     bool st = !stepOut[id]->read();
     stepOut[id]->write(st);
-    if (!st) return;
 
-    // ajuste de direção para eixo X invertido
-    int delta = (dirState[id] == 0 ? +1 : -1);
-    if (id == MotorX) {
-        delta = -delta;
+    // conta apenas na borda de subida, dobrando o incremento
+    if (st) {
+        int delta = (dirState[id] == 0 ? +1 : -1);
+        if (id == MotorX) delta = -delta;
+        position[id] += delta * 2;   // ∎ Aqui: cada pulso vale 2 passos
     }
-    position[id] += delta;
 
     // aceleração incremental
     if (++passoCount[id] >= PASSOS_PARA_ACELERAR) {
@@ -166,7 +163,6 @@ static void stepISR(int id) {
 }
 
 static void Mover_Frente(int id) {
-    // se estiver no limite, não inicia
     if (endMax[id]->read()) return;
     dirState[id]   = 0;
     dirOut[id]->write(0);
@@ -177,7 +173,6 @@ static void Mover_Frente(int id) {
 }
 
 static void Mover_Tras(int id) {
-    // se estiver no limite, não inicia
     if (endMin[id]->read()) return;
     dirState[id]   = 1;
     dirOut[id]->write(1);
@@ -192,10 +187,8 @@ static void Parar_Mov(int id) {
 }
 
 static void HomingTodos(void) {
-    // para qualquer movimento ativo
     stopTicker(MotorX);
     stopTicker(MotorY);
-    // homing X para fim máximo, Y para fim mínimo
     Mover_Frente(MotorX);
     Mover_Tras (MotorY);
     while (tickerOn[MotorX] || tickerOn[MotorY]) {
@@ -203,7 +196,6 @@ static void HomingTodos(void) {
         if (tickerOn[MotorY] && endMin [MotorY]->read()) Parar_Mov(MotorY);
         ThisThread::sleep_for(1ms);
     }
-    // reseta contadores
     position[MotorX] = 0;
     position[MotorY] = 0;
     position[MotorZ] = 0;
