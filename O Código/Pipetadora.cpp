@@ -143,7 +143,7 @@ static void stepISR(int id) {
     if (st) {
         int delta = (dirState[id] == 0 ? +1 : -1);
         if (id == MotorX) delta = -delta;
-        position[id] += delta * 2;   // ∎ Aqui: cada pulso vale 2 passos
+        position[id] += delta * 2;   // ∎ Aqui: cada pulso vale 2 passos. Por algum motivo... Mas aceito, não faz diferença
     }
 
     // aceleração incremental
