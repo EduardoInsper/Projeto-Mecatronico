@@ -1,187 +1,189 @@
-// Pipetadora.h
-#ifndef PIPETADORA_H
-#define PIPETADORA_H
-
-// Inicializa GPIO, tickers e variáveis internas de motores
-void Pipetadora_InitMotors();
-
-// Executa rotina de homing (referenciamento) dos eixos X e Y
-void Pipetadora_Homing();
-
-// Loop de controle manual; deve ser chamado repetidamente até retornar
-void Pipetadora_ManualControl();
-
-// Retorna posição (em cm) do eixo especificado (0=X, 1=Y, 2=Z)
-float Pipetadora_GetPositionCm(int id);
-
-#endif // PIPETADORA_H
-
-
 // Pipetadora.cpp
+
 #include "mbed.h"
 #include "pinos.h"
 #include "Pipetadora.h"
 #include <chrono>
-#include <cmath>
-
 using namespace std::chrono;
-constexpr float PI = 3.14159265f;
-
-// Evita redefinição de I2C_SDA/SCL
-#ifdef I2C_SDA
-#undef I2C_SDA
-#endif
-#ifdef I2C_SCL
-#undef I2C_SCL
-#endif
 
 // — Identificadores de eixos
 enum MotorId { MotorX = 0, MotorY = 1, MotorZ = 2, MotorCount };
 
-// — Pinos por eixo
-static constexpr PinName STEP_PIN   [MotorCount] = { MOTOR_X,   MOTOR_Y,   NC };
-static constexpr PinName DIR_PIN    [MotorCount] = { DIR_X,     DIR_Y,     NC };
-static constexpr PinName ENABLE_PIN [MotorCount] = { EN_X,      EN_Y,      NC };
-static constexpr PinName FDC_MIN_PIN[MotorCount] = { FDC_XDWN,  FDC_YDWN,  NC };
-static constexpr PinName FDC_MAX_PIN[MotorCount] = { FDC_XUP,   FDC_YUP,   NC };
+// — Pinos
+static constexpr PinName STEP_PIN   [MotorCount] = { MOTOR_X,   MOTOR_Y,   MOTOR_Z   };
+static constexpr PinName DIR_PIN    [MotorCount] = { DIR_X,     DIR_Y,     DIR_Z     };
+static constexpr PinName ENABLE_PIN [MotorCount] = { EN_X,      EN_Y,      EN_Z      };
+static constexpr PinName ENDMIN_PIN [MotorCount] = { FDC_XDWN,  FDC_YDWN,  FDC_ZDWN  };
+static constexpr PinName ENDMAX_PIN [MotorCount] = { FDC_XUP,   FDC_YUP,   FDC_ZUP   };
+static constexpr PinName BTN_UP_PIN [MotorCount] = { BTN_XUP,   BTN_YUP,   BTN_ZUP   };
+static constexpr PinName BTN_DWN_PIN[MotorCount] = { BTN_XDWN,  BTN_YDWN,  BTN_ZDWN  };
 
 // — Parâmetros de velocidade
-static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1200us, 800us,  800us };
-static constexpr microseconds PERIODO_MINIMO  [MotorCount] = { 175us,  175us,  175us };
-static constexpr int          PASSOS_PARA_ACELERAR       = 25;
-static constexpr microseconds REDUCAO_PERIODO[MotorCount] = { 25us,   25us,   25us };
+static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1000us, 800us, 800us };
+static constexpr microseconds PERIODO_MINIMO  [MotorCount] = {  175us, 175us, 175us };
+static constexpr microseconds REDUCAO_PERIODO [MotorCount] = {   25us,  25us,  25us };
+static constexpr int          PASSOS_PARA_ACELERAR      = 25;
 
-// — Raio de fuso (cm)
-static constexpr float DIAMETRO_FUSO[MotorCount] = { 16.0f, 14.0f, 16.0f };
-static constexpr float RFUSO_CM    [MotorCount] = {
-    DIAMETRO_FUSO[0]/2.0f/10.0f,
-    DIAMETRO_FUSO[1]/2.0f/10.0f,
-    DIAMETRO_FUSO[2]/2.0f/10.0f
-};
-static float RFuso[MotorCount] = { RFUSO_CM[0], RFUSO_CM[1], RFUSO_CM[2] };
+// — Passo de fuso (cm) para conversão de posição
+static constexpr float PASSO_FUSO[MotorCount] = { 5.0f, 5.0f, 5.0f };
 
-// — Objetos de hardware
+// — Hardware e estado
 static DigitalOut* stepOut   [MotorCount];
 static DigitalOut* dirOut    [MotorCount];
 static DigitalOut* enableOut [MotorCount];
 static DigitalIn*  endMin    [MotorCount];
 static DigitalIn*  endMax    [MotorCount];
-static Ticker      ticker    [MotorCount];
+static DigitalIn*  btnUp     [MotorCount];
+static DigitalIn*  btnDwn    [MotorCount];
+static Ticker*     tickers   [MotorCount];
 
-// — Estado de cada eixo
-static volatile int32_t position  [MotorCount] = {0,0,0};
-static volatile bool    tickerOn  [MotorCount] = {false,false,false};
-static int             dirState  [MotorCount] = {0,0,0};  // 0→frente,1→trás
-static microseconds     periodCur [MotorCount] = {
-    PERIODO_INICIAL[0],
-    PERIODO_INICIAL[1],
-    PERIODO_INICIAL[2]
+static volatile int32_t    position    [MotorCount];
+static volatile bool       tickerOn    [MotorCount];
+static microseconds        periodCur   [MotorCount];
+static int                 passoCount  [MotorCount];
+static int                 dirState    [MotorCount]; // 0 → frente, 1 → trás
+
+// — Wrappers para Ticker
+static void stepISR(int id);
+static void stepISR0() { stepISR(0); }
+static void stepISR1() { stepISR(1); }
+static void stepISR2() { stepISR(2); }
+static void (* const stepWrapper[MotorCount])() = {
+    stepISR0, stepISR1, stepISR2
 };
-static int             stepCount [MotorCount] = {0,0,0};
 
 // — Protótipos internos
-static void stepISR      (int id);
-static void startTicker  (int id);
-static void stopTicker   (int id);
-static void Mover_Frente (int id);
-static void Mover_Tras   (int id);
-static void Parar_Mov    (int id);
-static void HomingTodos  ();
+static void startTicker(int id);
+static void stopTicker (int id);
+static void Mover_Frente(int id);
+static void Mover_Tras  (int id);
+static void Parar_Mov   (int id);
+static void HomingTodos (void);
 
-// — Converte passos em cm
-float Pipetadora_GetPositionCm(int id) {
-    return (2.0f * PI * RFuso[id] / 400.0f) * float(position[id]);
-}
+// — API pública —
 
-void Pipetadora_InitMotors() {
+void Pipetadora_InitMotors(void) {
     for (int i = 0; i < MotorCount; ++i) {
-        stepOut  [i] = new DigitalOut(STEP_PIN[i],    0);
-        dirOut   [i] = new DigitalOut(DIR_PIN[i],     0);
-        enableOut[i] = new DigitalOut(ENABLE_PIN[i],  1);
-        endMin   [i] = new DigitalIn (FDC_MIN_PIN[i], PullDown);
-        endMax   [i] = new DigitalIn (FDC_MAX_PIN[i], PullDown);
-        periodCur[i] = PERIODO_INICIAL[i];
+        stepOut  [i] = new DigitalOut(STEP_PIN   [i], 0);
+        dirOut   [i] = new DigitalOut(DIR_PIN    [i], 0);
+        enableOut[i] = new DigitalOut(ENABLE_PIN [i], 1);
+        endMin   [i] = new DigitalIn (ENDMIN_PIN [i], PullDown);
+        endMax   [i] = new DigitalIn (ENDMAX_PIN [i], PullDown);
+        btnUp    [i] = new DigitalIn (BTN_UP_PIN  [i], PullDown);
+        btnDwn   [i] = new DigitalIn (BTN_DWN_PIN [i], PullDown);
+        tickers  [i] = new Ticker();
+
+        position   [i] = 0;
+        tickerOn   [i] = false;
+        periodCur  [i] = PERIODO_INICIAL[i];
+        passoCount [i] = 0;
+        dirState   [i] = 0;
     }
 }
 
-void Pipetadora_Homing() {
+void Pipetadora_Homing(void) {
     HomingTodos();
 }
 
-void Pipetadora_ManualControl() {
-    static DigitalIn btnXup(BTN_XUP,  PullDown),
-                     btnXdn(BTN_XDWN, PullDown),
-                     btnYup(BTN_YUP,  PullDown),
-                     btnYdn(BTN_YDWN, PullDown);
-    bool xup = btnXup.read(), xdn = btnXdn.read();
-    bool yup = btnYup.read(), ydn = btnYdn.read();
-    if (xup && !xdn) {
-        if (!tickerOn[MotorX] || dirState[MotorX] != 0) Mover_Frente(MotorX);
-    } else if (xdn && !xup) {
-        if (!tickerOn[MotorX] || dirState[MotorX] != 1) Mover_Tras(MotorX);
-    } else if (tickerOn[MotorX]) Parar_Mov(MotorX);
-    if (yup && !ydn) {
-        if (!tickerOn[MotorY] || dirState[MotorY] != 0) Mover_Frente(MotorY);
-    } else if (ydn && !yup) {
-        if (!tickerOn[MotorY] || dirState[MotorY] != 1) Mover_Tras(MotorY);
-    } else if (tickerOn[MotorY]) Parar_Mov(MotorY);
+void Pipetadora_ManualControl(void) {
+    for (int i = 0; i < MotorCount; ++i) {
+        bool up = btnUp[i]->read();
+        bool dn = btnDwn[i]->read();
+        // chama Mover_Frente/Mover_Tras para aplicar aceleração
+        if      (up && !dn) {
+            if (!tickerOn[i] || dirState[i] != 0) Mover_Frente(i);
+        } else if (dn && !up) {
+            if (!tickerOn[i] || dirState[i] != 1) Mover_Tras(i);
+        } else {
+            if (tickerOn[i]) Parar_Mov(i);
+        }
+    }
     ThisThread::sleep_for(10ms);
 }
 
+float Pipetadora_GetPositionCm(int id) {
+    // cálculo em double para evitar perda de casas decimais
+    double cm = (double)position[id] * (double)PASSO_FUSO[id] / 400.0;
+    return (float)cm;
+}
+
+int Pipetadora_GetPositionSteps(int id) {
+    return position[id];
+}
+
 // — Implementações internas —
+
+static void startTicker(int id) {
+    if (!tickerOn[id]) {
+        tickers[id]->attach_us(stepWrapper[id], periodCur[id].count());
+        tickerOn[id] = true;
+        enableOut[id]->write(0);
+    }
+}
+
+static void stopTicker(int id) {
+    if (tickerOn[id]) {
+        tickers[id]->detach();
+        tickerOn[id] = false;
+        enableOut[id]->write(1);
+    }
+}
+
 static void stepISR(int id) {
-    // para se atingir fim de curso físico
+    // verifica fim de curso
     if ((dirState[id] == 0 && endMax[id]->read()) ||
         (dirState[id] == 1 && endMin[id]->read())) {
         stopTicker(id);
         return;
     }
-    // gera pulso
-    (*stepOut[id]) = !(*stepOut[id]);
-    if (!(*stepOut[id])) return;
-    // atualiza posição: inverter sinal para MotorX
+
+    // gera pulso STEP (conta apenas na borda de subida)
+    bool st = !stepOut[id]->read();
+    stepOut[id]->write(st);
+    if (!st) return;
+
+    // ajuste de direção para eixo X invertido
+    int delta = (dirState[id] == 0 ? +1 : -1);
     if (id == MotorX) {
-        position[id] += (dirState[id] == 0 ? -1 : +1);
-    } else {
-        position[id] += (dirState[id] == 0 ? +1 : -1);
+        delta = -delta;
     }
-    // aceleração
-    if (++stepCount[id] >= PASSOS_PARA_ACELERAR) {
-        stepCount[id] = 0;
+    position[id] += delta;
+
+    // aceleração incremental
+    if (++passoCount[id] >= PASSOS_PARA_ACELERAR) {
+        passoCount[id] = 0;
         if (periodCur[id] > PERIODO_MINIMO[id]) {
             periodCur[id] -= REDUCAO_PERIODO[id];
-            ticker[id].attach([id]() { stepISR(id); }, periodCur[id]);
+            if (periodCur[id] < PERIODO_MINIMO[id]) {
+                periodCur[id] = PERIODO_MINIMO[id];
+            }
+            // re-attach com novo período
+            tickers[id]->detach();
+            tickers[id]->attach_us(stepWrapper[id], periodCur[id].count());
             tickerOn[id] = true;
         }
     }
 }
 
-static void startTicker(int id) {
-    ticker[id].attach([id]() { stepISR(id); }, periodCur[id]);
-    tickerOn[id] = true;
-}
-
-static void stopTicker(int id) {
-    ticker[id].detach();
-    tickerOn[id] = false;
-    (*enableOut[id]) = 1;
-}
-
 static void Mover_Frente(int id) {
-    // bloqueio em fim de curso físico
+    // se estiver no limite, não inicia
     if (endMax[id]->read()) return;
-    // reconfigura aceleração
-    periodCur[id] = PERIODO_INICIAL[id]; stepCount[id] = 0;
-    dirState[id] = 0; (*dirOut[id]) = 0; (*enableOut[id]) = 0;
+    dirState[id]   = 0;
+    dirOut[id]->write(0);
+    enableOut[id]->write(0);
+    periodCur[id]  = PERIODO_INICIAL[id];
+    passoCount[id] = 0;
     startTicker(id);
 }
 
 static void Mover_Tras(int id) {
-    // bloqueio em fim de curso físico
+    // se estiver no limite, não inicia
     if (endMin[id]->read()) return;
-    // reconfigura aceleração
-    periodCur[id] = PERIODO_INICIAL[id]; stepCount[id] = 0;
-    dirState[id] = 1; (*dirOut[id]) = 1; (*enableOut[id]) = 0;
+    dirState[id]   = 1;
+    dirOut[id]->write(1);
+    enableOut[id]->write(0);
+    periodCur[id]  = PERIODO_INICIAL[id];
+    passoCount[id] = 0;
     startTicker(id);
 }
 
@@ -189,22 +191,20 @@ static void Parar_Mov(int id) {
     stopTicker(id);
 }
 
-static void HomingTodos() {
-    // para movimentos ativos
-    for (int i : { MotorX, MotorY }) {
-        Parar_Mov(i);
-    }
-
-    // move X ao fim máximo (UP) e Y ao fim mínimo (DOWN) simultaneamente
+static void HomingTodos(void) {
+    // para qualquer movimento ativo
+    stopTicker(MotorX);
+    stopTicker(MotorY);
+    // homing X para fim máximo, Y para fim mínimo
     Mover_Frente(MotorX);
     Mover_Tras (MotorY);
     while (tickerOn[MotorX] || tickerOn[MotorY]) {
         if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
-        if (tickerOn[MotorY] && endMin[MotorY]->read()) Parar_Mov(MotorY);
+        if (tickerOn[MotorY] && endMin [MotorY]->read()) Parar_Mov(MotorY);
         ThisThread::sleep_for(1ms);
     }
-
-    // zera posições
+    // reseta contadores
     position[MotorX] = 0;
     position[MotorY] = 0;
+    position[MotorZ] = 0;
 }
