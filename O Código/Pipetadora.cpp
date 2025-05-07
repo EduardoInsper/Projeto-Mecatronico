@@ -1,5 +1,3 @@
-// Pipetadora.cpp
-
 #include "mbed.h"
 #include "pinos.h"
 #include "Pipetadora.h"
@@ -113,7 +111,8 @@ int Pipetadora_GetPositionSteps(int id) {
 
 static void startTicker(int id) {
     if (!tickerOn[id]) {
-        tickers[id]->attach_us(stepWrapper[id], periodCur[id].count());
+        // Usar attach com duração chrono em vez de attach_us
+        tickers[id]->attach(stepWrapper[id], periodCur[id]);
         tickerOn[id] = true;
         enableOut[id]->write(0);
     }
@@ -143,7 +142,7 @@ static void stepISR(int id) {
     if (st) {
         int delta = (dirState[id] == 0 ? +1 : -1);
         if (id == MotorX) delta = -delta;
-        position[id] += delta * 2;   // ∎ Aqui: cada pulso vale 2 passos. Por algum motivo... Mas aceito, não faz diferença
+        position[id] += delta * 2;
     }
 
     // aceleração incremental
@@ -154,9 +153,9 @@ static void stepISR(int id) {
             if (periodCur[id] < PERIODO_MINIMO[id]) {
                 periodCur[id] = PERIODO_MINIMO[id];
             }
-            // re-attach com novo período
+            // re-attach com novo período usando attach
             tickers[id]->detach();
-            tickers[id]->attach_us(stepWrapper[id], periodCur[id].count());
+            tickers[id]->attach(stepWrapper[id], periodCur[id]);
             tickerOn[id] = true;
         }
     }

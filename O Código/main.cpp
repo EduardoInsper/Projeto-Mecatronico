@@ -5,6 +5,8 @@
 #include "pinos.h"
 #include "Pipetadora.h"
 
+using namespace std::chrono;
+
 // I2C LCD setup
 I2C         i2c_lcd(D14, D15);
 TextLCD_I2C lcd(&i2c_lcd, 0x7E, TextLCD::LCD20x4);
@@ -41,10 +43,30 @@ const char* subMenu[SUB_COUNT] = {
 };
 
 // ISR handlers
-void isrUp()    { if (debounceTimer.read_ms()>=debounceTimeMs) { debounceTimer.reset(); upFlag    = true; } }
-void isrDown()  { if (debounceTimer.read_ms()>=debounceTimeMs) { debounceTimer.reset(); downFlag  = true; } }
-void isrEnter() { if (debounceTimer.read_ms()>=debounceTimeMs) { debounceTimer.reset(); enterFlag = true; } }
-void isrBack()  { if (debounceTimer.read_ms()>=debounceTimeMs) { debounceTimer.reset(); backFlag  = true; } }
+void isrUp() {
+    if (duration_cast<milliseconds>(debounceTimer.elapsed_time()).count() >= debounceTimeMs) {
+        debounceTimer.reset();
+        upFlag = true;
+    }
+}
+void isrDown() {
+    if (duration_cast<milliseconds>(debounceTimer.elapsed_time()).count() >= debounceTimeMs) {
+        debounceTimer.reset();
+        downFlag = true;
+    }
+}
+void isrEnter() {
+    if (duration_cast<milliseconds>(debounceTimer.elapsed_time()).count() >= debounceTimeMs) {
+        debounceTimer.reset();
+        enterFlag = true;
+    }
+}
+void isrBack() {
+    if (duration_cast<milliseconds>(debounceTimer.elapsed_time()).count() >= debounceTimeMs) {
+        debounceTimer.reset();
+        backFlag = true;
+    }
+}
 
 // Draw initial animated main menu
 void drawMainMenuAnim() {
