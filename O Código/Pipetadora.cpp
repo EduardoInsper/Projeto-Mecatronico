@@ -8,13 +8,14 @@ using namespace std::chrono;
 enum MotorId { MotorX = 0, MotorY = 1, MotorZ = 2, MotorCount };
 
 // — Pinos
-static constexpr PinName STEP_PIN   [MotorCount] = { MOTOR_X,   MOTOR_Y,   MOTOR_Z   };
-static constexpr PinName DIR_PIN    [MotorCount] = { DIR_X,     DIR_Y,     DIR_Z     };
-static constexpr PinName ENABLE_PIN [MotorCount] = { EN_X,      EN_Y,      EN_Z      };
+static constexpr PinName STEP_PIN   [MotorCount] = { MOTOR_X,   MOTOR_Y};
+static constexpr PinName DIR_PIN    [MotorCount] = { DIR_X,     DIR_Y};
+static constexpr PinName ENABLE_PIN [MotorCount] = { EN_X,      EN_Y};
 static constexpr PinName ENDMIN_PIN [MotorCount] = { FDC_XDWN,  FDC_YDWN,  FDC_ZDWN  };
 static constexpr PinName ENDMAX_PIN [MotorCount] = { FDC_XUP,   FDC_YUP,   FDC_ZUP   };
 static constexpr PinName BTN_UP_PIN [MotorCount] = { BTN_XUP,   BTN_YUP,   BTN_ZUP   };
 static constexpr PinName BTN_DWN_PIN[MotorCount] = { BTN_XDWN,  BTN_YDWN,  BTN_ZDWN  };
+static DigitalOut* z_coils[4];
 
 // — Parâmetros de velocidade
 static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1000us, 800us, 800us };
@@ -58,13 +59,44 @@ static void Mover_Tras  (int id);
 static void Parar_Mov   (int id);
 static void HomingTodos (void);
 
+void setupZCoils() {
+    z_coils[0] = new DigitalOut(Z_A1, 0);
+    z_coils[1] = new DigitalOut(Z_A2, 0);
+    z_coils[2] = new DigitalOut(Z_B1, 0);
+    z_coils[3] = new DigitalOut(Z_B2, 0);
+}
+
+const int Z_STEP_SEQUENCE[4][4] = {
+    {1, 0, 1, 0},
+    {0, 1, 1, 0},
+    {0, 1, 0, 1},
+    {1, 0, 0, 1}
+};
+
+int z_step_index = 0;
+
+void stepZMotor(bool forward) {
+    z_step_index += forward ? 1 : -1;
+    if (z_step_index >= 4) z_step_index = 0;
+    if (z_step_index < 0) z_step_index = 3;
+
+    for (int i = 0; i < 4; ++i) {
+        z_coils[i]->write(Z_STEP_SEQUENCE[z_step_index][i]);
+    }
+
+    position[MotorZ] += (forward ? +1 : -1);
+}
+
+
 // — API pública —
 
 void Pipetadora_InitMotors(void) {
     for (int i = 0; i < MotorCount; ++i) {
-        stepOut  [i] = new DigitalOut(STEP_PIN   [i], 0);
-        dirOut   [i] = new DigitalOut(DIR_PIN    [i], 0);
-        enableOut[i] = new DigitalOut(ENABLE_PIN [i], 1);
+        if (i != MotorZ) {
+            stepOut  [i] = new DigitalOut(STEP_PIN   [i], 0);
+            dirOut   [i] = new DigitalOut(DIR_PIN    [i], 0);
+            enableOut[i] = new DigitalOut(ENABLE_PIN [i], 1);
+        }
         endMin   [i] = new DigitalIn (ENDMIN_PIN [i], PullDown);
         endMax   [i] = new DigitalIn (ENDMAX_PIN [i], PullDown);
         btnUp    [i] = new DigitalIn (BTN_UP_PIN  [i], PullDown);
@@ -77,7 +109,11 @@ void Pipetadora_InitMotors(void) {
         passoCount [i] = 0;
         dirState   [i] = 0;
     }
+
+    // Inicializa bobinas do motor Z
+    setupZCoils();
 }
+
 
 void Pipetadora_Homing(void) {
     HomingTodos();
@@ -127,6 +163,18 @@ static void stopTicker(int id) {
 }
 
 static void stepISR(int id) {
+    // Tratamento especial para motor Z com controle por bobinas
+    if (id == MotorZ) {
+        if ((dirState[id] == 0 && endMax[id]->read()) ||
+            (dirState[id] == 1 && endMin[id]->read())) {
+            stopTicker(id);
+            return;
+        }
+
+        stepZMotor(dirState[id] == 0);
+        return;
+    }
+
     // verifica fim de curso
     if ((dirState[id] == 0 && endMax[id]->read()) ||
         (dirState[id] == 1 && endMin[id]->read())) {
@@ -153,12 +201,12 @@ static void stepISR(int id) {
             if (periodCur[id] < PERIODO_MINIMO[id]) {
                 periodCur[id] = PERIODO_MINIMO[id];
             }
-            // re-attach com novo período usando attach
             tickers[id]->detach();
             tickers[id]->attach(stepWrapper[id], periodCur[id]);
             tickerOn[id] = true;
         }
     }
+
 }
 
 static void Mover_Frente(int id) {
@@ -188,14 +236,21 @@ static void Parar_Mov(int id) {
 static void HomingTodos(void) {
     stopTicker(MotorX);
     stopTicker(MotorY);
+    stopTicker(MotorZ);
+    
     Mover_Frente(MotorX);
-    Mover_Tras (MotorY);
-    while (tickerOn[MotorX] || tickerOn[MotorY]) {
+    Mover_Tras  (MotorY);
+    Mover_Tras  (MotorZ);  // Considerando Z desce no sentido negativo
+
+    while (tickerOn[MotorX] || tickerOn[MotorY] || tickerOn[MotorZ]) {
         if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
         if (tickerOn[MotorY] && endMin [MotorY]->read()) Parar_Mov(MotorY);
+        if (tickerOn[MotorZ] && endMin [MotorZ]->read()) Parar_Mov(MotorZ);
         ThisThread::sleep_for(1ms);
     }
+
     position[MotorX] = 0;
     position[MotorY] = 0;
     position[MotorZ] = 0;
 }
+
