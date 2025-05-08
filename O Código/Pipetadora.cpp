@@ -234,23 +234,30 @@ static void Parar_Mov(int id) {
 }
 
 static void HomingTodos(void) {
+    // Parar qualquer movimento anterior
     stopTicker(MotorX);
     stopTicker(MotorY);
     stopTicker(MotorZ);
-    
+
+    // 1. Referenciar Z subindo até o fim de curso superior
+    Mover_Frente(MotorZ);
+    while (tickerOn[MotorZ]) {
+        if (endMax[MotorZ]->read()) Parar_Mov(MotorZ);
+        ThisThread::sleep_for(1ms);
+    }
+    position[MotorZ] = 0;
+
+    // 2. Iniciar X (subindo) e Y (descendo) ao mesmo tempo
     Mover_Frente(MotorX);
     Mover_Tras  (MotorY);
-    Mover_Tras  (MotorZ);  // Considerando Z desce no sentido negativo
-
-    while (tickerOn[MotorX] || tickerOn[MotorY] || tickerOn[MotorZ]) {
+    while (tickerOn[MotorX] || tickerOn[MotorY]) {
         if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
         if (tickerOn[MotorY] && endMin [MotorY]->read()) Parar_Mov(MotorY);
-        if (tickerOn[MotorZ] && endMin [MotorZ]->read()) Parar_Mov(MotorZ);
         ThisThread::sleep_for(1ms);
     }
 
     position[MotorX] = 0;
     position[MotorY] = 0;
-    position[MotorZ] = 0;
 }
+
 
