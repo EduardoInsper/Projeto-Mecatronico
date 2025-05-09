@@ -46,19 +46,16 @@
 //======================================================================
 #define MOTOR_X D5
 #define MOTOR_Y D4
+#define MOTOR_Z D7
 
-// EN_X, EN_Y: pinos para habilitar/desabilitar os drivers dos motores
+// EN_X, EN_Y e EN_Z: pinos para habilitar/desabilitar os drivers dos motores
 #define EN_X PC_4
 #define EN_Y D2
+#define EN_Z D6
 
-// DIR_X, DIR_Y: pinos que determinam o sentido de rotação dos motores
+// DIR_X, DIR_Y e DIR_Z: pinos que determinam o sentido de rotação dos motores
 #define DIR_X D9
 #define DIR_Y D3
-
-// Bobinas do motor Z (acionamento por MOSFETs)
-#define Z_A1 D7
-#define Z_A2 D6
-#define Z_B1 D8
-#define Z_B2 PC_8
+#define DIR_Z D8
 
 #endif
