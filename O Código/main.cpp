@@ -178,9 +178,6 @@ int main() {
                                 // switch=1 → mostra Z
                                 lcd.printf("Z:%5d/%2d.%1dcm", zs, zci, zcd);
                             }
-
-                            // 6) pequena pausa e checa botão “voltar”
-                            thread_sleep_for(100);
                             if (buttonBack.read()) backFlag = true;
                         }
 
