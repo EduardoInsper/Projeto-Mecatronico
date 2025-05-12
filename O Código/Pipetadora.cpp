@@ -167,11 +167,8 @@ void Pipetadora_ManualControl(void) {
         }
     }
 
-    // Pequeno delay para suavizar; se no modo Z, usa mesma velocidade do homing
-    if (sw) 
-        ThisThread::sleep_for(VEL_STEP_MS_Z);
-    else 
-        ThisThread::sleep_for(10ms);
+    // Pequeno delay para suavizar;
+    ThisThread::sleep_for(VEL_STEP_MS_Z);
 }
 
 
