@@ -5,6 +5,8 @@
 #include "pinos.h"
 #include "Pipetadora.h"
 
+DigitalIn switchSelectDisp(SWITCH_PIN, PullDown);
+
 using namespace std::chrono;
 
 // I2C LCD setup
@@ -147,25 +149,41 @@ int main() {
                         lcd.locate(0,1); lcd.printf("Back p/ sair");
                         backFlag = false;
                         while (!backFlag) {
-                            int   xs = Pipetadora_GetPositionSteps(0);
-                            int   ys = Pipetadora_GetPositionSteps(1);
-                            float xc = Pipetadora_GetPositionCm   (0);
-                            float yc = Pipetadora_GetPositionCm   (1);
+    // 1) executa controle manual (X e Y/Z)
+                            Pipetadora_ManualControl();
 
-                            // separar parte inteira e decimal de xc e yc
-                            int xci = (int) xc;
-                            int xcd = (int)((xc - xci)*10);
-                            int yci = (int) yc;
-                            int ycd = (int)((yc - yci)*10);
+                            // 2) lê posições em passos
+                            int xs = Pipetadora_GetPositionSteps(0);
+                            int ys = Pipetadora_GetPositionSteps(1);
+                            int zs = Pipetadora_GetPositionSteps(2);
 
+                            // 3) converte para cm
+                            float xc = Pipetadora_GetPositionCm(0);
+                            float yc = Pipetadora_GetPositionCm(1);
+                            float zc = Pipetadora_GetPositionCm(2);
+
+                            // 4) separa inteiro e decimal (1 casa)
+                            int xci = (int)xc, xcd = (int)((xc - xci)*10);
+                            int yci = (int)yc, ycd = (int)((yc - yci)*10);
+                            int zci = (int)zc, zcd = (int)((zc - zci)*10);
+
+                            // 5) exibe no LCD
                             lcd.locate(0,2);
                             lcd.printf("X:%5d/%2d.%1dcm", xs, xci, xcd);
                             lcd.locate(0,3);
-                            lcd.printf("Y:%5d/%2d.%1dcm", ys, yci, ycd);
+                            if (!switchSelectDisp.read()) {
+                                // switch=0 → mostra Y
+                                lcd.printf("Y:%5d/%2d.%1dcm", ys, yci, ycd);
+                            } else {
+                                // switch=1 → mostra Z
+                                lcd.printf("Z:%5d/%2d.%1dcm", zs, zci, zcd);
+                            }
 
-                            Pipetadora_ManualControl();
+                            // 6) pequena pausa e checa botão “voltar”
                             thread_sleep_for(100);
+                            if (buttonBack.read()) backFlag = true;
                         }
+
                         backFlag = false;
                         drawMainMenu();
                         break;

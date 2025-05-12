@@ -22,6 +22,7 @@
 #define BTN_YDWN  PA_15
 #define BTN_ZUP   PC_0
 #define BTN_ZDWN  PC_1
+#define SWITCH_PIN PA_13    // switch 0=Y / 1=Z
 
 //======================================================================
 // Botões de controle e emergência

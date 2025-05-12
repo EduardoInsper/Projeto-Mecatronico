@@ -3,6 +3,17 @@
 #include "Pipetadora.h"
 using namespace std::chrono;
 
+// ------------------------------------------------------------------
+// Variáveis e objetos para Z
+// ------------------------------------------------------------------
+static DigitalIn* switchSelect;         // lê o switch Y↔Z
+static DigitalIn* endMinZ;              // FDC Z inferior
+static DigitalIn* endMaxZ;              // FDC Z superior
+static volatile int32_t positionZ;      // contador de passos Z
+static constexpr float PASSO_FUSO_Z = 1.0f;
+static int zSeqIndex = 0;               // idx para sequência de bobinas Z
+
+
 // — Identificadores de eixos X e Y
 enum MotorId { MotorX = 0, MotorY = 1, MotorCount };
 
@@ -76,31 +87,105 @@ void Pipetadora_InitMotors(void) {
         dirState   [i] = 0;
     }
     coilsZ = 0; // garante Z desligado
+    switchSelect = new DigitalIn(SWITCH_PIN, PullDown);
+    endMinZ      = new DigitalIn(FDC_ZDWN,  PullDown);
+    endMaxZ      = new DigitalIn(FDC_ZUP,   PullDown);
+    positionZ    = 0;
+
 }
 
 void Pipetadora_Homing(void) {
     homingZ();
     HomingXY();
 }
+static void stepZForward() {
+    if (endMaxZ->read()) { coilsZ = 0; return; }
+    coilsZ = SEQ_Z[zSeqIndex];
+    zSeqIndex = (zSeqIndex + 1) % 4;
+    positionZ++;
+}
 
+static void stepZBackward() {
+    if (endMinZ->read()) { coilsZ = 0; return; }
+    zSeqIndex = (zSeqIndex + 3) % 4;
+    coilsZ = SEQ_Z[zSeqIndex];
+    positionZ--;
+}
 void Pipetadora_ManualControl(void) {
-    for (int i = 0; i < MotorCount; ++i) {
-        bool up = btnUp[i]->read();
-        bool dn = btnDwn[i]->read();
-        if      (up && !dn) { if (!tickerOn[i] || dirState[i] != 0) Mover_Frente(i); }
-        else if (dn && !up) { if (!tickerOn[i] || dirState[i] != 1) Mover_Tras(i);  }
-        else                { if (tickerOn[i]) Parar_Mov(i); }
+    // Lê o switch físico (0 → controlar Y; 1 → controlar Z)
+    bool sw = switchSelect->read();
+
+    // Movimento manual do eixo X (inalterado)
+    {
+        bool upX = btnUp[MotorX]->read();
+        bool dnX = btnDwn[MotorX]->read();
+        if      (upX && !dnX) { 
+            if (!tickerOn[MotorX] || dirState[MotorX] != 0) 
+                Mover_Frente(MotorX); 
+        }
+        else if (dnX && !upX) { 
+            if (!tickerOn[MotorX] || dirState[MotorX] != 1) 
+                Mover_Tras(MotorX);
+        }
+        else { 
+            if (tickerOn[MotorX]) 
+                Parar_Mov(MotorX);
+        }
     }
+
+    // Movimento manual do eixo Y ou Z, dependendo do estado do switch
+    {
+        bool upY = btnUp[MotorY]->read();
+        bool dnY = btnDwn[MotorY]->read();
+
+        if (!sw) {
+            // Modo Y normal
+            if      (upY && !dnY) { 
+                if (!tickerOn[MotorY] || dirState[MotorY] != 0) 
+                    Mover_Frente(MotorY); 
+            }
+            else if (dnY && !upY) { 
+                if (!tickerOn[MotorY] || dirState[MotorY] != 1) 
+                    Mover_Tras(MotorY);
+            }
+            else { 
+                if (tickerOn[MotorY]) 
+                    Parar_Mov(MotorY);
+            }
+        } else {
+            // Modo Z manual (usa mesmos botões Up/Down de Y)
+            if      (upY && !dnY) {
+                stepZForward();
+            }
+            else if (dnY && !upY) {
+                stepZBackward();
+            }
+            else {
+                // Nenhum botão; desliga bobinas Z
+                coilsZ = 0;
+            }
+        }
+    }
+
+    // Pequeno delay para suavizar controle
     ThisThread::sleep_for(10ms);
 }
 
+
 float Pipetadora_GetPositionCm(int id) {
-    return (float)((double)position[id] * PASSO_FUSO[id] / 400.0);
+    if (id < MotorCount)
+        return (float)(position[id] * PASSO_FUSO[id] / 400.0);
+    else
+        return (float)(positionZ * PASSO_FUSO_Z    / 400.0);
 }
 
 int Pipetadora_GetPositionSteps(int id) {
-    return position[id];
+    if (id < MotorCount)
+        return position[id];
+    else
+        return positionZ;
 }
+
 
 // — Homing paralelo X e Y —
 static void HomingXY(void) {
@@ -117,21 +202,25 @@ static void HomingXY(void) {
     position[MotorY] = 0;
 }
 
-// — Homing específico do Z —
+// — Homing específico do Z (igual a X/Y, usa FDC_ZDWN e FDC_ZUP) —
 static void homingZ(void) {
-    DigitalIn endUp(FDC_ZUP, PullDown);
+    // garante bobinas desligadas
     coilsZ = 0;
-    while (!endUp.read()) {
-        for (int i = 0; i < 4; ++i) {
-            if (endUp.read()) { coilsZ = 0; return; }
-            coilsZ = SEQ_Z[i];
-            thread_sleep_for(VEL_STEP_MS_Z);
-            coilsZ = 0;
-            thread_sleep_for(VEL_STEP_MS_Z);
-        }
+    // 1) Desce até bater no fim de curso inferior (ZDWN)
+    while (!endMinZ->read()) {
+        stepZBackward();
+        ThisThread::sleep_for(VEL_STEP_MS_Z);
     }
+    // 2) Sobe até o fim de curso superior (ZUP)
+    while (!endMaxZ->read()) {
+        stepZForward();
+        ThisThread::sleep_for(VEL_STEP_MS_Z);
+    }
+    // ponto home: desliga bobinas e zera contador
     coilsZ = 0;
+    positionZ = 0;
 }
+
 
 // — Implementações internas — 
 static void startTicker(int id) {
