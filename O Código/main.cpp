@@ -1,221 +1,287 @@
 #include "mbed.h"
-#include "TextLCD.h"
 #include "pinos.h"
 #include "Pipetadora.h"
-
 using namespace std::chrono;
 
-// I2C LCD
-I2C         i2c_lcd(I2C_SDA, I2C_SCL);
-TextLCD_I2C lcd(&i2c_lcd, LCD_I2C_ADDR, TextLCD::LCD20x4);
+// ------------------------------------------------------------------
+// Variáveis e objetos para Z
+// ------------------------------------------------------------------
+static DigitalIn* switchSelect;         // lê o switch Y↔Z
+static DigitalIn* endMinZ;              // FDC Z inferior
+static DigitalIn* endMaxZ;              // FDC Z superior
+static volatile int32_t positionZ;      // contador de passos Z
+static constexpr float PASSO_FUSO_Z = 1.0f;
+static int zSeqIndex = 0;               // idx para sequência de bobinas Z
 
-// Botões de menu
-InterruptIn btnUp   (BTN_XUP,   PullDown);
-InterruptIn btnDown (BTN_XDWN,  PullDown);
-InterruptIn btnEnter(BTN_ENTER, PullDown);
-InterruptIn btnBack (BTN_BACK,  PullDown);
-InterruptIn btnEmerg(EMER_2,    PullUp);
 
-// Debounce
-Timer       debounceTimer;
-const uint32_t debounceMs = 200;
-volatile bool upFlag=false, downFlag=false, enterFlag=false, backFlag=false, emergFlag=false;
+// — Identificadores de eixos X e Y
+enum MotorId { MotorX = 0, MotorY = 1, MotorCount };
 
-// Menu state
-bool inSubmenu = false;
-int cursor = 0;
-const int MAIN_COUNT = 3;
-const int SUB_COUNT  = 3;
-const char* mainMenu[MAIN_COUNT] = {"Referenciar","Manual","Pipetadora"};
-const char* subMenu[SUB_COUNT]   = {"Ponto Coleta","Pontos Solta","Pipetagem"};
+// — Parâmetros de velocidade e aceleração (X e Y)
+static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1000us, 800us };
+static constexpr microseconds PERIODO_MINIMO  [MotorCount] = {  175us, 175us };
+static constexpr microseconds REDUCAO_PERIODO [MotorCount] = {   25us,  25us };
+static constexpr int          PASSOS_PARA_ACELERAR      = 25;
+static constexpr float        PASSO_FUSO[MotorCount]    = { 0.5f, 0.5f };
 
-// Prototypes
-void drawMainMenu();
-void drawSubMenu();
-void handleMainSelect();
-void handleSubSelect();
-void telaColeta();
-void editaColeta();
-void telaSolta();
-void editaSolta();
-void selecionarML();
-void iniciarPipetagem();
+// — Pinos drivers (X, Y)
+static constexpr PinName STEP_PIN   [MotorCount] = { MOTOR_X, MOTOR_Y };
+static constexpr PinName DIR_PIN    [MotorCount] = { DIR_X,   DIR_Y   };
+static constexpr PinName ENABLE_PIN [MotorCount] = { EN_X,    EN_Y    };
+static constexpr PinName ENDMIN_PIN [MotorCount] = { FDC_XDWN,FDC_YDWN};
+static constexpr PinName ENDMAX_PIN [MotorCount] = { FDC_XUP, FDC_YUP };
+static constexpr PinName BTN_UP_PIN [MotorCount] = { BTN_XUP, BTN_YUP };
+static constexpr PinName BTN_DWN_PIN[MotorCount] = { BTN_XDWN, BTN_YDWN };
 
-// ISRs
-void isrUp()    { if(debounceTimer.elapsed_time().count()>debounceMs){ debounceTimer.reset(); upFlag = true; } }
-void isrDown()  { if(debounceTimer.elapsed_time().count()>debounceMs){ debounceTimer.reset(); downFlag = true; } }
-void isrEnter() { if(debounceTimer.elapsed_time().count()>debounceMs){ debounceTimer.reset(); enterFlag = true; } }
-void isrBack()  { if(debounceTimer.elapsed_time().count()>debounceMs){ debounceTimer.reset(); backFlag = true; } }
-void isrEmerg() { emergFlag = true; }
+// — Estado e hardware X/Y
+static DigitalOut* stepOut   [MotorCount];
+static DigitalOut* dirOut    [MotorCount];
+static DigitalOut* enableOut [MotorCount];
+static DigitalIn*  endMin    [MotorCount];
+static DigitalIn*  endMax    [MotorCount];
+static DigitalIn*  btnUp     [MotorCount];
+static DigitalIn*  btnDwn    [MotorCount];
+static Ticker*     tickers   [MotorCount];
+static volatile bool       tickerOn    [MotorCount];
+static volatile int32_t    position    [MotorCount];
+static microseconds        periodCur   [MotorCount];
+static int                 passoCount  [MotorCount];
+static int                 dirState    [MotorCount]; // 0 → frente, 1 → trás
 
-int main() {
-    debounceTimer.start();
-    Pipetadora_InitMotors();
+// — Wrappers para Ticker X/Y
+static void stepISR(int id);
+static void stepISR0() { stepISR(0); }
+static void stepISR1() { stepISR(1); }
+static void (* const stepWrapper[MotorCount])() = { stepISR0, stepISR1 };
 
-    btnUp.fall(&isrUp);
-    btnDown.fall(&isrDown);
-    btnEnter.fall(&isrEnter);
-    btnBack.fall(&isrBack);
-    btnEmerg.fall(&isrEmerg);
+// — Controle direto do Z
+static constexpr auto     VEL_STEP_MS_Z = 3ms; // ms entre passos Z (chrono)
+static constexpr uint8_t  SEQ_Z[4]      = { 0b0001, 0b0010, 0b0100, 0b1000 };
+static BusOut coilsZ(Z_A1, Z_A2, Z_B1, Z_B2);
 
-    drawMainMenu();
-    while(true) {
-        if (emergFlag) {
-            Pipetadora_EmergencyStop();
-            lcd.cls(); lcd.locate(0,0); lcd.printf("!!! EMERGENCIA !!!");
-            thread_sleep_for(1000);
-            emergFlag = false;
-            drawMainMenu();
+// — Protótipos internos
+static void startTicker(int id);
+static void stopTicker (int id);
+static void Mover_Frente(int id);
+static void Mover_Tras  (int id);
+static void Parar_Mov   (int id);
+static void HomingXY    (void);
+static void homingZ     (void);
+
+// — API pública —
+void Pipetadora_InitMotors(void) {
+    for (int i = 0; i < MotorCount; ++i) {
+        stepOut   [i] = new DigitalOut(STEP_PIN   [i], 0);
+        dirOut    [i] = new DigitalOut(DIR_PIN    [i], 0);
+        enableOut [i] = new DigitalOut(ENABLE_PIN [i], 1);
+        endMin    [i] = new DigitalIn (ENDMIN_PIN [i], PullDown);
+        endMax    [i] = new DigitalIn (ENDMAX_PIN [i], PullDown);
+        btnUp     [i] = new DigitalIn (BTN_UP_PIN  [i], PullDown);
+        btnDwn    [i] = new DigitalIn (BTN_DWN_PIN [i], PullDown);
+        tickers   [i] = new Ticker();
+
+        position   [i] = 0;
+        tickerOn   [i] = false;
+        periodCur  [i] = PERIODO_INICIAL[i];
+        passoCount [i] = 0;
+        dirState   [i] = 0;
+    }
+    coilsZ = 0; // garante Z desligado
+    switchSelect = new DigitalIn(SWITCH_PIN, PullDown);
+    endMinZ      = new DigitalIn(FDC_ZDWN,  PullDown);
+    endMaxZ      = new DigitalIn(FDC_ZUP,   PullDown);
+    positionZ    = 0;
+
+}
+
+void Pipetadora_Homing(void) {
+    homingZ();
+    HomingXY();
+}
+static void stepZForward() {
+    if (endMaxZ->read()) { coilsZ = 0; return; }
+    coilsZ = SEQ_Z[zSeqIndex];
+    zSeqIndex = (zSeqIndex + 1) % 4;
+    positionZ++;
+}
+
+static void stepZBackward() {
+    if (endMinZ->read()) { coilsZ = 0; return; }
+    zSeqIndex = (zSeqIndex + 3) % 4;
+    coilsZ = SEQ_Z[zSeqIndex];
+    positionZ--;
+}
+void Pipetadora_ManualControl(void) {
+    // Lê o switch físico (0 → controlar Y; 1 → controlar Z)
+    bool sw = switchSelect->read();
+
+    // Movimento manual do eixo X (inalterado)
+    {
+        bool upX = btnUp[MotorX]->read();
+        bool dnX = btnDwn[MotorX]->read();
+        if      (upX && !dnX) { 
+            if (!tickerOn[MotorX] || dirState[MotorX] != 0) 
+                Mover_Frente(MotorX); 
         }
-        if (upFlag || downFlag || enterFlag || backFlag) {
-            if (!inSubmenu) handleMainSelect(); else handleSubSelect();
-            upFlag = downFlag = enterFlag = backFlag = false;
+        else if (dnX && !upX) { 
+            if (!tickerOn[MotorX] || dirState[MotorX] != 1) 
+                Mover_Tras(MotorX);
         }
-        thread_sleep_for(50);
-    }
-}
-
-void drawMainMenu() {
-    lcd.cls(); lcd.locate(3,0); lcd.printf("MENU PRINCIPAL");
-    for (int i = 0; i < MAIN_COUNT; ++i) {
-        lcd.locate(1, i+1); lcd.printf("%s", mainMenu[i]);
-    }
-    cursor = 0;
-    inSubmenu = false;
-    lcd.locate(0,1); lcd.putc('>');
-}
-
-void drawSubMenu() {
-    lcd.cls(); lcd.locate(3,0); lcd.printf("PIPETADORA");
-    for (int i = 0; i < SUB_COUNT; ++i) {
-        lcd.locate(1, i+1); lcd.printf("%s", subMenu[i]);
-    }
-    cursor = 0;
-    inSubmenu = true;
-    lcd.locate(0,1); lcd.putc('>');
-}
-
-void handleMainSelect() {
-    if (upFlag && cursor > 0) --cursor;
-    if (downFlag && cursor < MAIN_COUNT-1) ++cursor;
-    drawMainMenu();
-    if (enterFlag) {
-        switch(cursor) {
-            case 0:
-                lcd.cls(); lcd.printf("Referenciando...");
-                Pipetadora_Homing();
-                thread_sleep_for(500);
-                drawMainMenu();
-                break;
-            case 1:
-                lcd.cls(); lcd.printf("Modo Manual");
-                while(!backFlag) Pipetadora_ManualControl();
-                backFlag = false;
-                drawMainMenu();
-                break;
-            case 2:
-                drawSubMenu();
-                break;
+        else { 
+            if (tickerOn[MotorX]) 
+                Parar_Mov(MotorX);
         }
     }
-}
 
-void handleSubSelect() {
-    if (upFlag && cursor > 0) --cursor;
-    if (downFlag && cursor < SUB_COUNT-1) ++cursor;
-    drawSubMenu();
-    if (enterFlag) {
-        switch(cursor) {
-            case 0: telaColeta(); break;
-            case 1: telaSolta();  break;
-            case 2: iniciarPipetagem(); break;
+    // Movimento manual do eixo Y ou Z, dependendo do estado do switch
+    {
+        bool upY = btnUp[MotorY]->read();
+        bool dnY = btnDwn[MotorY]->read();
+
+        if (!sw) {
+            // Modo Y normal
+            if      (upY && !dnY) { 
+                if (!tickerOn[MotorY] || dirState[MotorY] != 0) 
+                    Mover_Frente(MotorY); 
+            }
+            else if (dnY && !upY) { 
+                if (!tickerOn[MotorY] || dirState[MotorY] != 1) 
+                    Mover_Tras(MotorY);
+            }
+            else { 
+                if (tickerOn[MotorY]) 
+                    Parar_Mov(MotorY);
+            }
+        } else {
+            // Modo Z manual (usa mesmos botões Up/Down de Y)
+            if      (upY && !dnY) {
+                stepZForward();
+            }
+            else if (dnY && !upY) {
+                stepZBackward();
+            }
+            else {
+                // Nenhum botão; desliga bobinas Z
+                coilsZ = 0;
+            }
         }
     }
-    if (backFlag) {
-        drawMainMenu();
-        backFlag = false;
+
+    // Pequeno delay para suavizar; se no modo Z, usa mesma velocidade do homing
+    if (sw) 
+        ThisThread::sleep_for(VEL_STEP_MS_Z);
+    else 
+        ThisThread::sleep_for(10ms);
+}
+
+
+float Pipetadora_GetPositionCm(int id) {
+    if (id < MotorCount)
+        return (float)(position[id] * PASSO_FUSO[id] / 400.0);
+    else
+        return (float)(positionZ * PASSO_FUSO_Z    / 400.0);
+}
+
+int Pipetadora_GetPositionSteps(int id) {
+    if (id < MotorCount)
+        return position[id];
+    else
+        return positionZ;
+}
+
+
+// — Homing paralelo X e Y —
+static void HomingXY(void) {
+    stopTicker(MotorX);
+    stopTicker(MotorY);
+    Mover_Frente(MotorX);
+    Mover_Tras(MotorY);
+    while (tickerOn[MotorX] || tickerOn[MotorY]) {
+        if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
+        if (tickerOn[MotorY] && endMin [MotorY]->read()) Parar_Mov(MotorY);
+        ThisThread::sleep_for(1ms);
+    }
+    position[MotorX] = 0;
+    position[MotorY] = 0;
+}
+
+// — Homing específico do Z (igual a X/Y, usa FDC_ZDWN e FDC_ZUP) —
+static void homingZ(void) {
+    // Desliga bobinas
+    coilsZ = 0;
+
+    // Sobe até acionar o fim de curso superior (ZUP)
+    while (!endMaxZ->read()) {
+        stepZForward();
+        ThisThread::sleep_for(VEL_STEP_MS_Z);
+    }
+
+    // Ao atingir ZUP, zera posição e marca este ponto como zero
+    coilsZ = 0;
+    positionZ = 0;  // home no topo → posição = 0
+}
+
+// — Implementações internas — 
+static void startTicker(int id) {
+    if (!tickerOn[id]) {
+        tickers[id]->attach(stepWrapper[id], periodCur[id]);
+        tickerOn[id] = true;
+        enableOut[id]->write(0);
     }
 }
 
-void telaColeta() {
-    int x,y,z;
-    Pipetadora_GetCollectionPoint(&x, &y, &z);
-    lcd.cls(); lcd.printf("Coleta: X=%d Y=%d", x, y);
-    lcd.locate(0,1); lcd.printf("Z=%d", z);
-    lcd.locate(0,2); lcd.printf("Enter p/ editar");
-    while(!enterFlag && !backFlag) thread_sleep_for(50);
-    if (enterFlag) editaColeta();
-    if (backFlag) {
-        drawSubMenu();
-        backFlag = false;
+static void stopTicker(int id) {
+    if (tickerOn[id]) {
+        tickers[id]->detach();
+        tickerOn[id] = false;
+        enableOut[id]->write(1);
     }
-    enterFlag = false;
 }
 
-void editaColeta() {
-    lcd.cls(); lcd.printf("Mover e Enter");
-    while(!enterFlag) Pipetadora_ManualControl();
-    int cx = Pipetadora_GetPositionSteps(0);
-    int cy = Pipetadora_GetPositionSteps(1);
-    int cz = Pipetadora_GetPositionSteps(2);
-    Pipetadora_SetCollectionPoint(cx, cy, cz);
-    lcd.cls(); lcd.printf("Coleta salvo");
-    thread_sleep_for(500);
-    drawSubMenu();
-    enterFlag = false;
-}
-
-void telaSolta() {
-    int n = Pipetadora_GetDispenseCount();
-    lcd.cls(); lcd.printf("Pontos Solta: %d", n);
-    lcd.locate(0,1); lcd.printf("Enter p/ editar");
-    while(!enterFlag && !backFlag) thread_sleep_for(50);
-    if (enterFlag) editaSolta();
-    if (backFlag) {
-        drawSubMenu();
-        backFlag = false;
+static void stepISR(int id) {
+    if ((dirState[id] == 0 && endMax[id]->read()) ||
+        (dirState[id] == 1 && endMin[id]->read())) {
+        stopTicker(id);
+        return;
     }
-    enterFlag = false;
-}
-
-void editaSolta() {
-    int idx = Pipetadora_GetDispenseCount();
-    lcd.cls(); lcd.printf("Ponto #%d: Mover", idx+1);
-    while(!enterFlag) Pipetadora_ManualControl();
-    int sx = Pipetadora_GetPositionSteps(0);
-    int sy = Pipetadora_GetPositionSteps(1);
-    int sz = Pipetadora_GetPositionSteps(2);
-    lcd.cls(); lcd.printf("Sel ML");
-    selecionarML();
-    Pipetadora_AddDispensePoint(sx, sy, sz, Pipetadora_GetML());
-    int newCount = Pipetadora_GetDispenseCount();
-    lcd.cls(); lcd.printf("Salvo Pt %d", newCount);
-    thread_sleep_for(500);
-    drawSubMenu();
-    enterFlag = false;
-}
-
-void selecionarML() {
-    int ml = Pipetadora_GetML();
-    lcd.cls(); lcd.printf("ML: %d", ml);
-    while(true) {
-        if(upFlag)    ++ml;
-        if(downFlag)  --ml;
-        if(ml < 1)   ml = 1;
-        if(ml > 100) ml = 100;
-        Pipetadora_SetML(ml);
-        lcd.locate(0,1); lcd.printf("%d ml", ml);
-        if (enterFlag) break;
-        upFlag = downFlag = false;
-        thread_sleep_for(100);
+    bool st = !stepOut[id]->read();
+    stepOut[id]->write(st);
+    if (st) {
+        int delta = (dirState[id] == 0 ? +1 : -1);
+        position[id] += delta * 2;
     }
-    enterFlag = false;
+    if (++passoCount[id] >= PASSOS_PARA_ACELERAR) {
+        passoCount[id] = 0;
+        if (periodCur[id] > PERIODO_MINIMO[id]) {
+            periodCur[id] -= REDUCAO_PERIODO[id];
+            if (periodCur[id] < PERIODO_MINIMO[id]) periodCur[id] = PERIODO_MINIMO[id];
+            tickers[id]->detach();
+            tickers[id]->attach(stepWrapper[id], periodCur[id]);
+            tickerOn[id] = true;
+        }
+    }
 }
 
-void iniciarPipetagem() {
-    lcd.cls(); lcd.printf("Pipetando...");
-    Pipetadora_ExecutePipetting();
-    lcd.cls(); lcd.printf("Concluido");
-    thread_sleep_for(500);
-    drawSubMenu();
+static void Mover_Frente(int id) {
+    if (endMax[id]->read()) return;
+    dirState[id] = 0;
+    dirOut[id]->write(0);
+    enableOut[id]->write(0);
+    periodCur[id] = PERIODO_INICIAL[id];
+    passoCount[id] = 0;
+    startTicker(id);
+}
+
+static void Mover_Tras(int id) {
+    if (endMin[id]->read()) return;
+    dirState[id] = 1;
+    dirOut[id]->write(1);
+    enableOut[id]->write(0);
+    periodCur[id] = PERIODO_INICIAL[id];
+    passoCount[id] = 0;
+    startTicker(id);
+}
+
+static void Parar_Mov(int id) {
+    stopTicker(id);
 }
