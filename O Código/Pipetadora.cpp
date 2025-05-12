@@ -55,7 +55,7 @@ static void stepISR1() { stepISR(1); }
 static void (* const stepWrapper[MotorCount])() = { stepISR0, stepISR1 };
 
 // — Controle direto do Z
-static constexpr uint32_t VEL_STEP_MS_Z = 3;  // ms entre passos Z
+static constexpr auto     VEL_STEP_MS_Z = 3ms; // ms entre passos Z (chrono)
 static constexpr uint8_t  SEQ_Z[4]      = { 0b0001, 0b0010, 0b0100, 0b1000 };
 static BusOut coilsZ(Z_A1, Z_A2, Z_B1, Z_B2);
 
@@ -167,8 +167,11 @@ void Pipetadora_ManualControl(void) {
         }
     }
 
-    // Pequeno delay para suavizar controle
-    ThisThread::sleep_for(10ms);
+    // Pequeno delay para suavizar; se no modo Z, usa mesma velocidade do homing
+    if (sw) 
+        ThisThread::sleep_for(VEL_STEP_MS_Z);
+    else 
+        ThisThread::sleep_for(10ms);
 }
 
 
@@ -204,23 +207,19 @@ static void HomingXY(void) {
 
 // — Homing específico do Z (igual a X/Y, usa FDC_ZDWN e FDC_ZUP) —
 static void homingZ(void) {
-    // garante bobinas desligadas
+    // Desliga bobinas
     coilsZ = 0;
-    // 1) Desce até bater no fim de curso inferior (ZDWN)
-    while (!endMinZ->read()) {
-        stepZBackward();
-        ThisThread::sleep_for(VEL_STEP_MS_Z);
-    }
-    // 2) Sobe até o fim de curso superior (ZUP)
+
+    // Sobe até acionar o fim de curso superior (ZUP)
     while (!endMaxZ->read()) {
         stepZForward();
         ThisThread::sleep_for(VEL_STEP_MS_Z);
     }
-    // ponto home: desliga bobinas e zera contador
-    coilsZ = 0;
-    positionZ = 0;
-}
 
+    // Ao atingir ZUP, zera posição e marca este ponto como zero
+    coilsZ = 0;
+    positionZ = 0;  // home no topo → posição = 0
+}
 
 // — Implementações internas — 
 static void startTicker(int id) {
