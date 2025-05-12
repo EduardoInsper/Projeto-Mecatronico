@@ -5,23 +5,34 @@
 extern "C" {
 #endif
 
-// Inicializa GPIO, tickers e variáveis internas de motores
+// Inicialização e controle básico
 void Pipetadora_InitMotors(void);
-
-// Executa rotina de homing (referenciamento) dos eixos X e Y
 void Pipetadora_Homing(void);
-
-// Loop de controle manual; deve ser chamado repetidamente até retornar
 void Pipetadora_ManualControl(void);
-
-// Retorna posição (em cm) do eixo especificado (0=X, 1=Y, 2=Z)
 float Pipetadora_GetPositionCm(int id);
-
-// Retorna posição (em passos) do eixo especificado (0=X, 1=Y, 2=Z)
 int   Pipetadora_GetPositionSteps(int id);
+
+// Emergência
+void  Pipetadora_EmergencyStop(void);
+
+// Coleta e solta
+void  Pipetadora_SetCollectionPoint(int x, int y, int z);
+void  Pipetadora_GetCollectionPoint(int *x, int *y, int *z);
+void  Pipetadora_AddDispensePoint(int x, int y, int z, int ml);
+int   Pipetadora_GetDispenseCount(void);
+
+// Seleção de volume
+void  Pipetadora_SetML(int ml);
+int   Pipetadora_GetML(void);
+
+// Movimentos
+void  Pipetadora_MoveToPosition(int axisId, int targetSteps);
+void  Pipetadora_MoveInterpolated(int xTarget, int yTarget);
+
+// Pipetagem automática
+void  Pipetadora_ExecutePipetting(void);
 
 #ifdef __cplusplus
 }
 #endif
-
 #endif // PIPETADORA_H
