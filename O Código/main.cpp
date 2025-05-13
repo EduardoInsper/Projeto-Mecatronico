@@ -303,7 +303,7 @@ int main() {
                         Pipetadora_MoveTo(2, 0);
                         
                         // 6–9) Para cada ponto de soltura:
-                        for (int j = 0; j < numSolta; j  ) {
+                        for (int j = 0; j < numSolta; j++) {
                             // 6) Z já está no topo: mova XY
                             Pipetadora_MoveTo(0, pontosSolta[j].pos[0]);
                             Pipetadora_MoveTo(1, pontosSolta[j].pos[1]);
