@@ -3,6 +3,9 @@
 #include "Pipetadora.h"
 using namespace std::chrono;
 
+// configurações de tempo de pipeta
+static DigitalOut* pipette;
+static constexpr int TIME_PER_ML_MS = 100; // ajuste conforme calibração
 // ------------------------------------------------------------------
 // Variáveis e objetos para Z
 // ------------------------------------------------------------------
@@ -91,6 +94,10 @@ void Pipetadora_InitMotors(void) {
     endMinZ      = new DigitalIn(FDC_ZDWN,  PullDown);
     endMaxZ      = new DigitalIn(FDC_ZUP,   PullDown);
     positionZ    = 0;
+
+    // inicializa pipeta
+    pipette = new DigitalOut(PIPETA);
+    pipette->write(0);
 
 }
 
@@ -281,4 +288,54 @@ static void Mover_Tras(int id) {
 
 static void Parar_Mov(int id) {
     stopTicker(id);
+}
+
+// Move o eixo especificado (0=X,1=Y,2=Z) até targetSteps passos (bloqueante)
+extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
+    if (id < MotorCount) {
+        int32_t current = position[id];
+        int32_t delta   = targetSteps - current;
+        if (delta > 0) {
+            Mover_Frente(id);
+            while (position[id] < targetSteps) ThisThread::sleep_for(1ms);
+            Parar_Mov(id);
+        } else if (delta < 0) {
+            Mover_Tras(id);
+            while (position[id] > targetSteps) ThisThread::sleep_for(1ms);
+            Parar_Mov(id);
+        }
+    } else if (id == MotorCount) {
+        // Z
+        int32_t current = positionZ;
+        int32_t delta   = targetSteps - current;
+        if (delta > 0) {
+            while (positionZ < targetSteps) {
+                stepZForward();
+                ThisThread::sleep_for(VEL_STEP_MS_Z);
+            }
+        } else if (delta < 0) {
+            while (positionZ > targetSteps) {
+                stepZBackward();
+                ThisThread::sleep_for(VEL_STEP_MS_Z);
+            }
+        }
+    }
+}
+
+// Aciona válvula por volume_ml mL
+extern "C" void Pipetadora_ActuateValve(int volume_ml) {
+    pipette->write(1);
+    ThisThread::sleep_for(std::chrono::milliseconds(volume_ml * TIME_PER_ML_MS));
+    pipette->write(0);
+}
+
+// Para imediatamente todos os movimentos e desativa bobinas (emergência)
+extern "C" void Pipetadora_StopAll(void) {
+    // paralisa X e Y
+    Parar_Mov(MotorX);
+    Parar_Mov(MotorY);
+    // desliga bobinas Z
+    coilsZ = 0;
+    // garante válvula fechada
+    pipette->write(0);
 }
