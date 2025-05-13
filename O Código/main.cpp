@@ -280,27 +280,46 @@ int main() {
                         break;
                     }
                     case 3: { // Iniciar Pipetagem
-                        enterFlag = false;
-                        backFlag  = false;
+                        enterFlag = backFlag = false;
                         lcd.cls(); lcd.printf("Iniciando..."); ThisThread::sleep_for(500ms);
-                        // Executa pipetagem no ponto único de coleta:
-                        Pipetadora_MoveTo(0, pontosColeta.pos[0]);
-                        Pipetadora_MoveTo(1, pontosColeta.pos[1]);
-                        Pipetadora_MoveTo(2, pontosColeta.pos[2]);
-                        Pipetadora_ActuateValve(volume_ml);
+                    
+                        // (Opcional) garanta home limpo:
+                        // Pipetadora_Homing();
+                        
+                        // 1) Z → topo (posição zero) antes de mover XY
                         Pipetadora_MoveTo(2, 0);
                         
-                        // Executa soltura em cada ponto configurado:
-                        for (int j = 0; j < numSolta; j++) {
+                        // 2) Move XY ao ponto de coleta
+                        Pipetadora_MoveTo(0, pontosColeta.pos[0]);
+                        Pipetadora_MoveTo(1, pontosColeta.pos[1]);
+                        
+                        // 3) Desce Z ao ponto de coleta
+                        Pipetadora_MoveTo(2, pontosColeta.pos[2]);
+                        
+                        // 4) Aciona válvula
+                        Pipetadora_ActuateValve(volume_ml);
+                        
+                        // 5) Levanta Z ao topo
+                        Pipetadora_MoveTo(2, 0);
+                        
+                        // 6–9) Para cada ponto de soltura:
+                        for (int j = 0; j < numSolta; j  ) {
+                            // 6) Z já está no topo: mova XY
                             Pipetadora_MoveTo(0, pontosSolta[j].pos[0]);
                             Pipetadora_MoveTo(1, pontosSolta[j].pos[1]);
+                        
+                            // 7) Desce Z ao ponto de soltura
                             Pipetadora_MoveTo(2, pontosSolta[j].pos[2]);
+                        
+                            // 8) Abre válvula
                             Pipetadora_ActuateValve(volume_ml);
+                        
+                            // 9) Levanta Z ao topo antes da próxima iteração
                             Pipetadora_MoveTo(2, 0);
                         }
+                        
                         lcd.cls(); lcd.printf("Concluido"); ThisThread::sleep_for(1000ms);
-                        inSubmenu = false;
-                        cursor    = 0;
+                        inSubmenu = false; cursor = 0;
                         drawMainMenu();
                         break;
                     }
