@@ -305,16 +305,28 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
             Parar_Mov(id);
         }
     } else if (id == MotorCount) {
-        // Z
-        int32_t current = positionZ;
-        int32_t delta   = targetSteps - current;
+        // ----------------------------------------------------------
+        // Z axis movement with endstop detection to avoid lock-up
+        // ----------------------------------------------------------
+        int32_t delta = targetSteps - positionZ;
         if (delta > 0) {
+            // descida do Z (positionZ incrementa)
             while (positionZ < targetSteps) {
+                // se bateu no fim-de-curso superior, marca home e sai
+                if (endMaxZ->read()) {
+                    positionZ = 0;
+                    break;
+                }
                 stepZForward();
                 ThisThread::sleep_for(VEL_STEP_MS_Z);
             }
         } else if (delta < 0) {
+            // subida do Z (positionZ decrementa)
             while (positionZ > targetSteps) {
+                // se bateu no fim-de-curso inferior, sai
+                if (endMinZ->read()) {
+                    break;
+                }
                 stepZBackward();
                 ThisThread::sleep_for(VEL_STEP_MS_Z);
             }
@@ -358,7 +370,7 @@ void Pipetadora_MoveLinear(int tx, int ty) {
             err += dx;
         }
         // aguarda próximo pulso (ajuste uso de VEL_STEP_MS_Z ou similar)
-        ThisThread::sleep_for(std::chrono::milliseconds(periodCur[MotorX].count() / 1000));
+        wait_us(periodCur[MotorX].count());
     }
     // desliga drivers
     enableOut[MotorX]->write(1);
