@@ -281,6 +281,12 @@ int main() {
                     }
                     case 3: { // Iniciar Pipetagem
                         enterFlag = backFlag = false;
+                        // ▶️ validação: só segue se houver ponto de coleta salvo
+                        if (pontosColeta.pos[0]==0 && pontosColeta.pos[1]==0 && pontosColeta.pos[2]==0) {
+                            lcd.cls(); lcd.printf("Erro: Configurar Coleta"); ThisThread::sleep_for(1000ms);
+                            drawSubMenu();
+                            break;
+                        }
                         lcd.cls(); lcd.printf("Iniciando..."); ThisThread::sleep_for(500ms);
                     
                         // (Opcional) garanta home limpo:
