@@ -295,9 +295,8 @@ int main() {
                         // 1) Z → topo (posição zero) antes de mover XY
                         Pipetadora_MoveTo(2, 0);
                         
-                        // 2) Move XY ao ponto de coleta
-                        Pipetadora_MoveTo(0, pontosColeta.pos[0]);
-                        Pipetadora_MoveTo(1, pontosColeta.pos[1]);
+                        // 2) Move X e Y interpolados até o ponto de coleta
+                        Pipetadora_MoveLinear(pontosColeta.pos[0], pontosColeta.pos[1]);
                         
                         // 3) Desce Z ao ponto de coleta
                         Pipetadora_MoveTo(2, pontosColeta.pos[2]);
@@ -311,8 +310,7 @@ int main() {
                         // 6–9) Para cada ponto de soltura:
                         for (int j = 0; j < numSolta; j++) {
                             // 6) Z já está no topo: mova XY
-                            Pipetadora_MoveTo(0, pontosSolta[j].pos[0]);
-                            Pipetadora_MoveTo(1, pontosSolta[j].pos[1]);
+                            Pipetadora_MoveLinear(pontosSolta[j].pos[0], pontosSolta[j].pos[1]);
                         
                             // 7) Desce Z ao ponto de soltura
                             Pipetadora_MoveTo(2, pontosSolta[j].pos[2]);

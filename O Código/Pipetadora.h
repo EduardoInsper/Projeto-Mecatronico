@@ -5,7 +5,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
+// Move X and Y simultaneously in a straight line to (tx,ty)
+void  Pipetadora_MoveLinear(int tx, int ty);
 // Inicializa GPIO, tickers e variáveis internas de motores e pipeta
 void Pipetadora_InitMotors(void);
 // Executa rotina de homing (referenciamento) dos eixos X, Y e Z

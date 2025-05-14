@@ -2,7 +2,7 @@
 #include "pinos.h"
 #include "Pipetadora.h"
 using namespace std::chrono;
-
+using namespace std::chrono_literals;
 // configurações de tempo de pipeta
 static DigitalOut* pipette;
 static constexpr int TIME_PER_ML_MS = 100; // ajuste conforme calibração
@@ -321,6 +321,50 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
         }
     }
 }
+// Adicione no fim de Pipetadora.cpp, antes do “// Aciona válvula”:
+
+// Caminha simultaneamente X e Y em linha reta até (tx,ty)
+void Pipetadora_MoveLinear(int tx, int ty) {
+    // captura posições iniciais
+    int x0 = position[MotorX], y0 = position[MotorY];
+    int dx = tx - x0, dy = ty - y0;
+    int sx = (dx>0 ? 1 : -1), sy = (dy>0 ? 1 : -1);
+    dx = abs(dx); dy = abs(dy);
+    int err = dx - dy;
+    // habilita drivers
+    enableOut[MotorX]->write(0);
+    enableOut[MotorY]->write(0);
+    // define direções
+    dirOut[MotorX]->write(sx<0);
+    dirOut[MotorY]->write(sy<0);
+
+    while (true) {
+        // um passo em X se chegamos no “momento”
+        if (x0 == tx && y0 == ty) break;
+
+        int e2 = err * 2;
+        if (e2 > -dy) {
+            // passo em X
+            stepOut[MotorX]->write(!stepOut[MotorX]->read());
+            x0 += sx;
+            position[MotorX] = x0;
+            err -= dy;
+        }
+        if (e2 <  dx) {
+            // passo em Y
+            stepOut[MotorY]->write(!stepOut[MotorY]->read());
+            y0 += sy;
+            position[MotorY] = y0;
+            err += dx;
+        }
+        // aguarda próximo pulso (ajuste uso de VEL_STEP_MS_Z ou similar)
+        ThisThread::sleep_for(std::chrono::milliseconds(periodCur[MotorX].count() / 1000));
+    }
+    // desliga drivers
+    enableOut[MotorX]->write(1);
+    enableOut[MotorY]->write(1);
+}
+
 
 // Aciona válvula por volume_ml mL
 extern "C" void Pipetadora_ActuateValve(int volume_ml) {
