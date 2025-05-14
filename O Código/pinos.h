@@ -95,7 +95,7 @@ PINOS FINAIS CORRETOS
 #define EMER_2    PC_3
 #define BTN_ENTER PA_13
 #define BTN_BACK  PA_14
-#define BTN_SWITCH PA_15
+#define SWITCH_PIN PA_15
 
 #define BTN_VELO1 PA_0
 #define BTN_VELO2 PA_1

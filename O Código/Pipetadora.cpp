@@ -337,45 +337,74 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
 
 // Caminha simultaneamente X e Y em linha reta até (tx,ty)
 void Pipetadora_MoveLinear(int tx, int ty) {
-    // captura posições iniciais
     int x0 = position[MotorX], y0 = position[MotorY];
-    int dx = tx - x0, dy = ty - y0;
-    int sx = (dx>0 ? 1 : -1), sy = (dy>0 ? 1 : -1);
-    dx = abs(dx); dy = abs(dy);
+    int dx = abs(tx - x0), dy = abs(ty - y0);
+    int sx = (tx > x0 ? 1 : -1), sy = (ty > y0 ? 1 : -1);
     int err = dx - dy;
-    // habilita drivers
+
+    // habilita drivers e define direções
     enableOut[MotorX]->write(0);
     enableOut[MotorY]->write(0);
-    // define direções
-    dirOut[MotorX]->write(sx<0);
-    dirOut[MotorY]->write(sy<0);
+    dirOut[MotorX]->write(sx < 0);
+    dirOut[MotorY]->write(sy < 0);
 
-    while (true) {
-        // um passo em X se chegamos no “momento”
-        if (x0 == tx && y0 == ty) break;
+    // contadores de passos para rampa
+    int stepsX = 0, stepsY = 0;
+    microseconds periodX = PERIODO_INICIAL[MotorX];
+    microseconds periodY = PERIODO_INICIAL[MotorY];
+
+    while (x0 != tx || y0 != ty) {
+        // 1) Atualiza rampa X
+        if (stepsX < PASSOS_PARA_ACELERAR) {
+            auto p = PERIODO_INICIAL[MotorX] - REDUCAO_PERIODO[MotorX] * stepsX;
+            periodX = (p < PERIODO_MINIMO[MotorX] ? PERIODO_MINIMO[MotorX] : p);
+        } else {
+            periodX = PERIODO_MINIMO[MotorX];
+        }
+        // 2) Atualiza rampa Y
+        if (stepsY < PASSOS_PARA_ACELERAR) {
+            auto p = PERIODO_INICIAL[MotorY] - REDUCAO_PERIODO[MotorY] * stepsY;
+            periodY = (p < PERIODO_MINIMO[MotorY] ? PERIODO_MINIMO[MotorY] : p);
+        } else {
+            periodY = PERIODO_MINIMO[MotorY];
+        }
 
         int e2 = err * 2;
+
+        // passo em X, se necessário
         if (e2 > -dy) {
-            // passo em X
-            stepOut[MotorX]->write(!stepOut[MotorX]->read());
+            stepOut[MotorX]->write(1);
+            wait_us(2);
+            stepOut[MotorX]->write(0);
             x0 += sx;
             position[MotorX] = x0;
             err -= dy;
+            stepsX++;
         }
-        if (e2 <  dx) {
-            // passo em Y
-            stepOut[MotorY]->write(!stepOut[MotorY]->read());
+        // passo em Y, se necessário
+        if (e2 < dx) {
+            stepOut[MotorY]->write(1);
+            wait_us(2);
+            stepOut[MotorY]->write(0);
             y0 += sy;
             position[MotorY] = y0;
             err += dx;
+            stepsY++;
         }
-        // aguarda próximo pulso (ajuste uso de VEL_STEP_MS_Z ou similar)
-        wait_us(periodCur[MotorX].count());
+
+        // 3) pausa para manter o passo de X como referência de tempo
+        //    usando o menor período entre X e Y para sincronização
+        uint32_t delay_us = (periodX.count() < periodY.count()
+                             ? periodX.count()
+                             : periodY.count());
+        wait_us(delay_us);
     }
+
     // desliga drivers
     enableOut[MotorX]->write(1);
     enableOut[MotorY]->write(1);
 }
+
 
 
 // Aciona válvula por volume_ml mL
