@@ -22,7 +22,7 @@ enum MotorId { MotorX = 0, MotorY = 1, MotorCount };
 
 // — Parâmetros de velocidade e aceleração (X e Y)
 static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1000us, 800us };
-static constexpr microseconds PERIODO_MINIMO  [MotorCount] = {  175us, 175us };
+static constexpr microseconds PERIODO_MINIMO  [MotorCount] = {  200us, 200us };
 static constexpr microseconds REDUCAO_PERIODO [MotorCount] = {   25us,  25us };
 static constexpr int          PASSOS_PARA_ACELERAR      = 25;
 static constexpr float        PASSO_FUSO[MotorCount]    = { 0.5f, 0.5f };
