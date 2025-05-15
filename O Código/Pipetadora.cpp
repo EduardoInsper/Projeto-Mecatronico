@@ -5,7 +5,7 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 // configurações de tempo de pipeta
 static DigitalOut* pipette;
-static constexpr int TIME_PER_ML_MS = 1000; // ajuste conforme calibração
+static constexpr int TIME_PER_ML_MS = 1200; // ajuste conforme calibração
 // ------------------------------------------------------------------
 // Variáveis e objetos para Z
 // ------------------------------------------------------------------
@@ -374,6 +374,7 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
                 ThisThread::sleep_for(VEL_STEP_MS_Z);
             }
         }
+        coilsZ = 0;
     }
 }
 // Adicione no fim de Pipetadora.cpp, antes do “// Aciona válvula”:
