@@ -5,7 +5,7 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 // configurações de tempo de pipeta
 static DigitalOut* pipette;
-static constexpr int TIME_PER_ML_MS = 500; // ajuste conforme calibração
+static constexpr int TIME_PER_ML_MS = 1000; // ajuste conforme calibração
 // ------------------------------------------------------------------
 // Variáveis e objetos para Z
 // ------------------------------------------------------------------
@@ -29,7 +29,7 @@ static constexpr microseconds PERIODO_MINIMO  [MotorCount] = {  225us, 225us };
 static constexpr microseconds REDUCAO_PERIODO [MotorCount] = {   25us,  25us };
 static constexpr int          PASSOS_PARA_ACELERAR      = 25;
 static constexpr float        PASSO_FUSO[MotorCount]    = { 0.5f, 0.5f };
-
+static constexpr microseconds INTERP_PERIOD = PERIODO_INICIAL[MotorX];  // velocidade fixa de interpolação (ex: 1000 µs)
 // — Pinos drivers (X, Y)
 static constexpr PinName STEP_PIN   [MotorCount] = { MOTOR_X, MOTOR_Y };
 static constexpr PinName DIR_PIN    [MotorCount] = { DIR_X,   DIR_Y   };
@@ -295,7 +295,6 @@ static void Parar_Mov(int id) {
     stopTicker(id);
 }
 static void stepLinearX() {
-    // fim de movimento?
     if (lin_x0 == lin_tx && lin_y0 == lin_ty) {
         tickers[MotorX]->detach();
         tickerOn[MotorX] = false;
@@ -304,23 +303,13 @@ static void stepLinearX() {
     }
     int e2 = lin_err * 2;
     if (e2 > -lin_dy) {
-        // passo X
         stepOut[MotorX]->write(!stepOut[MotorX]->read());
         lin_x0 += lin_sx;
         position[MotorX] = lin_x0;
         lin_err    -= lin_dy;
-        // rampa de aceleração
-        if (br_stepsX < PASSOS_PARA_ACELERAR) {
-            auto p = PERIODO_INICIAL[MotorX] - REDUCAO_PERIODO[MotorX] * br_stepsX;
-            br_periodX = (p < PERIODO_MINIMO[MotorX] ? PERIODO_MINIMO[MotorX] : p);
-        } else {
-            br_periodX = PERIODO_MINIMO[MotorX];
-        }
-        br_stepsX++;
     }
-    // reprograme próximo tick
     tickers[MotorX]->detach();
-    tickers[MotorX]->attach(stepLinearX_wrapper, br_periodX);
+    tickers[MotorX]->attach(stepLinearX_wrapper, INTERP_PERIOD);
 }
 
 static void stepLinearY() {
@@ -336,16 +325,9 @@ static void stepLinearY() {
         lin_y0 += lin_sy;
         position[MotorY] = lin_y0;
         lin_err    += lin_dx;
-        if (br_stepsY < PASSOS_PARA_ACELERAR) {
-            auto p = PERIODO_INICIAL[MotorY] - REDUCAO_PERIODO[MotorY] * br_stepsY;
-            br_periodY = (p < PERIODO_MINIMO[MotorY] ? PERIODO_MINIMO[MotorY] : p);
-        } else {
-            br_periodY = PERIODO_MINIMO[MotorY];
-        }
-        br_stepsY++;
     }
     tickers[MotorY]->detach();
-    tickers[MotorY]->attach(stepLinearY_wrapper, br_periodY);
+    tickers[MotorY]->attach(stepLinearY_wrapper, INTERP_PERIOD);
 }
 
 // precisa desses wrappers por causa da assinatura void func()
@@ -404,23 +386,21 @@ extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
     lin_dx = abs(lin_tx - lin_x0);  lin_dy = abs(lin_ty - lin_y0);
     lin_sx = (lin_tx > lin_x0 ? 1 : -1); lin_sy = (lin_ty > lin_y0 ? 1 : -1);
     lin_err = lin_dx - lin_dy;
-    br_stepsX = br_stepsY = 0;
-    br_periodX = PERIODO_INICIAL[MotorX];
-    br_periodY = PERIODO_INICIAL[MotorY];
 
-    // habilita drivers e seta direção
+    // drivers e direção
     enableOut[MotorX]->write(0);
     enableOut[MotorY]->write(0);
     dirOut[MotorX]->write(lin_sx < 0);
     dirOut[MotorY]->write(lin_sy < 0);
 
-    // arranca ambos tickers
+    // arranque dos tickers com período fixo
     tickers[MotorX]->detach();
     tickers[MotorY]->detach();
-    tickers[MotorX]->attach(stepLinearX_wrapper, br_periodX); tickerOn[MotorX] = true;
-    tickers[MotorY]->attach(stepLinearY_wrapper, br_periodY); tickerOn[MotorY] = true;
+    tickerOn[MotorX] = tickerOn[MotorY] = true;
+    tickers[MotorX]->attach(stepLinearX_wrapper, INTERP_PERIOD);
+    tickers[MotorY]->attach(stepLinearY_wrapper, INTERP_PERIOD);
 
-    // aguarda fim de ambos
+    // espera ambos terminarem
     while (tickerOn[MotorX] || tickerOn[MotorY]) {
         ThisThread::sleep_for(1ms);
     }
