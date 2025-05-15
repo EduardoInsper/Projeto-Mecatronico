@@ -120,7 +120,6 @@ int main() {
         }
 
         // 2) Navegação
-        // 2) Navegação
         if (!inSubmenu) {
             if (upFlag)   { cursor = (cursor-1+MAIN_COUNT)%MAIN_COUNT; drawMainMenu(); upFlag=false; }
             else if (downFlag) { cursor = (cursor+1)%MAIN_COUNT; drawMainMenu(); downFlag=false; }

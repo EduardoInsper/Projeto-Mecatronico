@@ -5,7 +5,7 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 // configurações de tempo de pipeta
 static DigitalOut* pipette;
-static constexpr int TIME_PER_ML_MS = 100; // ajuste conforme calibração
+static constexpr int TIME_PER_ML_MS = 500; // ajuste conforme calibração
 // ------------------------------------------------------------------
 // Variáveis e objetos para Z
 // ------------------------------------------------------------------
@@ -15,6 +15,9 @@ static DigitalIn* endMaxZ;              // FDC Z superior
 static volatile int32_t positionZ;      // contador de passos Z
 static constexpr float PASSO_FUSO_Z = 1.0f;
 static int zSeqIndex = 0;               // idx para sequência de bobinas Z
+static volatile int lin_x0, lin_y0, lin_tx, lin_ty, lin_dx, lin_dy, lin_sx, lin_sy, lin_err;
+static volatile int br_stepsX, br_stepsY;
+static microseconds br_periodX, br_periodY;
 
 
 // — Identificadores de eixos X e Y
@@ -56,6 +59,8 @@ static void stepISR(int id);
 static void stepISR0() { stepISR(0); }
 static void stepISR1() { stepISR(1); }
 static void (* const stepWrapper[MotorCount])() = { stepISR0, stepISR1 };
+static void stepLinearX_wrapper();
+static void stepLinearY_wrapper();
 
 // — Controle direto do Z
 static constexpr auto     VEL_STEP_MS_Z = 3ms; // ms entre passos Z (chrono)
@@ -289,7 +294,63 @@ static void Mover_Tras(int id) {
 static void Parar_Mov(int id) {
     stopTicker(id);
 }
+static void stepLinearX() {
+    // fim de movimento?
+    if (lin_x0 == lin_tx && lin_y0 == lin_ty) {
+        tickers[MotorX]->detach();
+        tickerOn[MotorX] = false;
+        enableOut[MotorX]->write(1);
+        return;
+    }
+    int e2 = lin_err * 2;
+    if (e2 > -lin_dy) {
+        // passo X
+        stepOut[MotorX]->write(!stepOut[MotorX]->read());
+        lin_x0 += lin_sx;
+        position[MotorX] = lin_x0;
+        lin_err    -= lin_dy;
+        // rampa de aceleração
+        if (br_stepsX < PASSOS_PARA_ACELERAR) {
+            auto p = PERIODO_INICIAL[MotorX] - REDUCAO_PERIODO[MotorX] * br_stepsX;
+            br_periodX = (p < PERIODO_MINIMO[MotorX] ? PERIODO_MINIMO[MotorX] : p);
+        } else {
+            br_periodX = PERIODO_MINIMO[MotorX];
+        }
+        br_stepsX++;
+    }
+    // reprograme próximo tick
+    tickers[MotorX]->detach();
+    tickers[MotorX]->attach(stepLinearX_wrapper, br_periodX);
+}
 
+static void stepLinearY() {
+    if (lin_x0 == lin_tx && lin_y0 == lin_ty) {
+        tickers[MotorY]->detach();
+        tickerOn[MotorY] = false;
+        enableOut[MotorY]->write(1);
+        return;
+    }
+    int e2 = lin_err * 2;
+    if (e2 < lin_dx) {
+        stepOut[MotorY]->write(!stepOut[MotorY]->read());
+        lin_y0 += lin_sy;
+        position[MotorY] = lin_y0;
+        lin_err    += lin_dx;
+        if (br_stepsY < PASSOS_PARA_ACELERAR) {
+            auto p = PERIODO_INICIAL[MotorY] - REDUCAO_PERIODO[MotorY] * br_stepsY;
+            br_periodY = (p < PERIODO_MINIMO[MotorY] ? PERIODO_MINIMO[MotorY] : p);
+        } else {
+            br_periodY = PERIODO_MINIMO[MotorY];
+        }
+        br_stepsY++;
+    }
+    tickers[MotorY]->detach();
+    tickers[MotorY]->attach(stepLinearY_wrapper, br_periodY);
+}
+
+// precisa desses wrappers por causa da assinatura void func()
+static void stepLinearX_wrapper() { stepLinearX(); }
+static void stepLinearY_wrapper() { stepLinearY(); }
 // Move o eixo especificado (0=X,1=Y,2=Z) até targetSteps passos (bloqueante)
 extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
     if (id < MotorCount) {
@@ -336,68 +397,32 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
 // Adicione no fim de Pipetadora.cpp, antes do “// Aciona válvula”:
 
 // Caminha simultaneamente X e Y em linha reta até (tx,ty)
-void Pipetadora_MoveLinear(int tx, int ty) {
-    int x0 = position[MotorX], y0 = position[MotorY];
-    int dx = abs(tx - x0), dy = abs(ty - y0);
-    int sx = (tx > x0 ? 1 : -1), sy = (ty > y0 ? 1 : -1);
-    int err = dx - dy;
+extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
+    // inicializa Bresenham
+    lin_x0 = position[MotorX];  lin_y0 = position[MotorY];
+    lin_tx = tx;                lin_ty = ty;
+    lin_dx = abs(lin_tx - lin_x0);  lin_dy = abs(lin_ty - lin_y0);
+    lin_sx = (lin_tx > lin_x0 ? 1 : -1); lin_sy = (lin_ty > lin_y0 ? 1 : -1);
+    lin_err = lin_dx - lin_dy;
+    br_stepsX = br_stepsY = 0;
+    br_periodX = PERIODO_INICIAL[MotorX];
+    br_periodY = PERIODO_INICIAL[MotorY];
 
-    // habilita drivers e define direções
+    // habilita drivers e seta direção
     enableOut[MotorX]->write(0);
     enableOut[MotorY]->write(0);
-    dirOut[MotorX]->write(sx < 0);
-    dirOut[MotorY]->write(sy < 0);
+    dirOut[MotorX]->write(lin_sx < 0);
+    dirOut[MotorY]->write(lin_sy < 0);
 
-    // contadores de passos para rampa
-    int stepsX = 0, stepsY = 0;
-    microseconds periodX = PERIODO_INICIAL[MotorX];
-    microseconds periodY = PERIODO_INICIAL[MotorY];
+    // arranca ambos tickers
+    tickers[MotorX]->detach();
+    tickers[MotorY]->detach();
+    tickers[MotorX]->attach(stepLinearX_wrapper, br_periodX); tickerOn[MotorX] = true;
+    tickers[MotorY]->attach(stepLinearY_wrapper, br_periodY); tickerOn[MotorY] = true;
 
-    while (x0 != tx || y0 != ty) {
-        // 1) Atualiza rampa X
-        if (stepsX < PASSOS_PARA_ACELERAR) {
-            auto p = PERIODO_INICIAL[MotorX] - REDUCAO_PERIODO[MotorX] * stepsX;
-            periodX = (p < PERIODO_MINIMO[MotorX] ? PERIODO_MINIMO[MotorX] : p);
-        } else {
-            periodX = PERIODO_MINIMO[MotorX];
-        }
-        // 2) Atualiza rampa Y
-        if (stepsY < PASSOS_PARA_ACELERAR) {
-            auto p = PERIODO_INICIAL[MotorY] - REDUCAO_PERIODO[MotorY] * stepsY;
-            periodY = (p < PERIODO_MINIMO[MotorY] ? PERIODO_MINIMO[MotorY] : p);
-        } else {
-            periodY = PERIODO_MINIMO[MotorY];
-        }
-
-        int e2 = err * 2;
-
-        // passo em X, se necessário
-        if (e2 > -dy) {
-            stepOut[MotorX]->write(1);
-            wait_us(2);
-            stepOut[MotorX]->write(0);
-            x0 += sx;
-            position[MotorX] = x0;
-            err -= dy;
-            stepsX++;
-        }
-        // passo em Y, se necessário
-        if (e2 < dx) {
-            stepOut[MotorY]->write(1);
-            wait_us(2);
-            stepOut[MotorY]->write(0);
-            y0 += sy;
-            position[MotorY] = y0;
-            err += dx;
-            stepsY++;
-        }
-
-        // 3) pausa para manter o passo de X como referência de tempo
-        //    usando o menor período entre X e Y para sincronização
-        uint32_t delay_us = (periodX.count() < periodY.count()
-                             ? periodX.count()
-                             : periodY.count());
-        wait_us(delay_us);
+    // aguarda fim de ambos
+    while (tickerOn[MotorX] || tickerOn[MotorY]) {
+        ThisThread::sleep_for(1ms);
     }
 
     // desliga drivers
