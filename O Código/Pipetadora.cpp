@@ -29,7 +29,7 @@ static constexpr microseconds PERIODO_MINIMO  [MotorCount] = {  225us, 225us };
 static constexpr microseconds REDUCAO_PERIODO [MotorCount] = {   25us,  25us };
 static constexpr int          PASSOS_PARA_ACELERAR      = 25;
 static constexpr float        PASSO_FUSO[MotorCount]    = { 0.5f, 0.5f };
-static constexpr microseconds INTERP_PERIOD = PERIODO_INICIAL[MotorX] / 2;   // velocidade fixa de interpolação (ex: 1000 µs)
+static constexpr microseconds INTERP_PERIOD = PERIODO_INICIAL[MotorX] / 3;   // velocidade fixa de interpolação (ex: 1000 µs)
 // — Pinos drivers (X, Y)
 static constexpr PinName STEP_PIN   [MotorCount] = { MOTOR_X, MOTOR_Y };
 static constexpr PinName DIR_PIN    [MotorCount] = { DIR_X,   DIR_Y   };
