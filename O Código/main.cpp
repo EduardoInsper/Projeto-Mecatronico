@@ -140,8 +140,13 @@ int main() {
                         drawMainMenu(); break;
                     case 1: // Mov Manual
                         lcd.cls(); lcd.printf("Mov Manual");
+                        // fica em manual até Back
                         while (!backFlag) Pipetadora_ManualControl();
-                        backFlag=false; drawMainMenu(); break;
+                        backFlag = false;
+                        // garante parada imediata de TODOS os motores
+                        Pipetadora_StopAll();
+                        drawMainMenu();
+                        break;
                     case 2: // Pipetadora submenu
                         if (!homed) {
                             lcd.cls(); lcd.printf("Erro: Faça homing"); ThisThread::sleep_for(800ms);
