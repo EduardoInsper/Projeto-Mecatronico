@@ -158,8 +158,10 @@ int main() {
                         drawMainMenu(); break;
                     case 1: // Mov Manual
                         lcd.cls(); lcd.printf("Mov Manual");
-                        // fica em manual até Back
-                        while (!backFlag) Pipetadora_ManualControl();
+                        // fica em manual até Back ou Emergência
+                        while (!backFlag && !emergActive) {
+                            Pipetadora_ManualControl();
+                        }
                         backFlag = false;
                         // garante parada imediata de TODOS os motores
                         Pipetadora_StopAll();
@@ -178,7 +180,10 @@ int main() {
                 switch (cursor) {
                     case 0: { // Config Coleta
                         lcd.cls(); lcd.printf("Posicione e Enter");
-                        while (!enterFlag && !backFlag) Pipetadora_ManualControl();
+                        // sai com Enter, Back ou Emergência
+                        while (!enterFlag && !backFlag && !emergActive) {
+                            Pipetadora_ManualControl();
+                        }
                         if (enterFlag) {
                             pontosColeta.pos[0] = Pipetadora_GetPositionSteps(0);
                             pontosColeta.pos[1] = Pipetadora_GetPositionSteps(1);
@@ -193,18 +198,22 @@ int main() {
                         lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta);
                         // 1) escolhe quantos pontos
                         bool doneQtd=false;
-                        while (!doneQtd) {
+                        while (!doneQtd && !emergActive) {
                             if (upFlag   && numSolta<MAX_POINTS) { numSolta++; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); upFlag=false; }
                             if (downFlag && numSolta>0)           { numSolta--; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); downFlag=false; }
                             if (enterFlag) { enterFlag=false; doneQtd=true; }
                             if (backFlag)  { backFlag=false; doneQtd=true; numSolta=0; }
-                            ThisThread::sleep_for(50ms);
                         }
                         // 2) para cada ponto, salva pos + ajusta volume
                         for (int i=0; i<numSolta; i++) {
                             // posição
                             lcd.cls(); lcd.printf("Mov PtoS %d", i+1);
-                            while (!enterFlag) Pipetadora_ManualControl();
+                            lcd.cls(); lcd.printf("Mov PtoS %d", i+1);
+                            // sai com Enter, Back ou Emergência
+                            while (!enterFlag && !backFlag && !emergActive) {
+                                Pipetadora_ManualControl();
+                            }
+                            if (!enterFlag) { backFlag=false; break; }
                             enterFlag=false;
                             pontosSolta[i].pos[0] = Pipetadora_GetPositionSteps(0);
                             pontosSolta[i].pos[1] = Pipetadora_GetPositionSteps(1);
@@ -212,7 +221,7 @@ int main() {
                             // volume
                             volumeSolta[i] = 1;  // default
                             bool doneVol=false;
-                            while (!doneVol) {
+                            while (!doneVol && !backFlag && !emergActive) {
                                 lcd.cls(); lcd.printf("Vol Pto%d:%d mL", i+1, volumeSolta[i]);
                                 if (upFlag)   { volumeSolta[i]++; upFlag=false; }
                                 if (downFlag && volumeSolta[i]>1) { volumeSolta[i]--; downFlag=false; }
@@ -249,10 +258,10 @@ int main() {
                         Pipetadora_MoveTo(2, 0); ThisThread::sleep_for(50ms);
 
                         // Para cada ponto de soltura
-                        for (int j=0; j<numSolta; j++) {
+                        for (int j=0; j<numSolta && !emergActive; j++) {
                             int needed = volumeSolta[j];
                             int done    = 0;
-                            while (done < needed) {
+                            while (done < needed && !emergActive) {
                                 // 1) aspirar 1 mL no ponto de coleta
                                 Pipetadora_MoveLinear(pontosColeta.pos[0], pontosColeta.pos[1]);
                                 ThisThread::sleep_for(50ms);
@@ -275,6 +284,7 @@ int main() {
 
                                 done++;
                             }
+                            if (emergActive) break;
                         }
 
                         lcd.cls(); lcd.printf("Concluido"); ThisThread::sleep_for(800ms);
