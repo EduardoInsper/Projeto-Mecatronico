@@ -8,7 +8,7 @@ using namespace std::chrono;
 using namespace std::chrono_literals;
 // configurações de tempo de pipeta
 static DigitalOut* pipette;
-static constexpr int TIME_PER_ML_MS = 1200; // ajuste conforme calibração
+static constexpr int TIME_PER_ML_MS = 50; // ajuste conforme calibração
 // ------------------------------------------------------------------
 // Variáveis e objetos para Z
 // ------------------------------------------------------------------
@@ -430,7 +430,7 @@ extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
 extern "C" void Pipetadora_ActuateValve(int volume_ml) {
     if (!emergPin.read()) return;
     pipette->write(1);
-    ThisThread::sleep_for(std::chrono::milliseconds(volume_ml * TIME_PER_ML_MS));
+    ThisThread::sleep_for(50ms);
     pipette->write(0);
 }
 

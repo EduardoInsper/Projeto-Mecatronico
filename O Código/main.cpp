@@ -203,6 +203,7 @@ int main() {
                             if (downFlag && numSolta>0)           { numSolta--; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); downFlag=false; }
                             if (enterFlag) { enterFlag=false; doneQtd=true; }
                             if (backFlag)  { backFlag=false; doneQtd=true; numSolta=0; }
+                            ThisThread::sleep_for(1ms);
                         }
                         // 2) para cada ponto, salva pos + ajusta volume
                         for (int i=0; i<numSolta; i++) {
@@ -268,7 +269,7 @@ int main() {
                                 Pipetadora_MoveTo   (2, pontosColeta.pos[2]);
                                 ThisThread::sleep_for(50ms);
                                 Pipetadora_ActuateValve(1);  // aspira
-                                ThisThread::sleep_for(50ms);
+                                ThisThread::sleep_for(1200ms);
                                 Pipetadora_MoveTo   (2, 0);  // sobe
                                 ThisThread::sleep_for(50ms);
 
@@ -278,7 +279,7 @@ int main() {
                                 Pipetadora_MoveTo   (2, pontosSolta[j].pos[2]);
                                 ThisThread::sleep_for(50ms);
                                 Pipetadora_ActuateValve(1);  // dispensa
-                                ThisThread::sleep_for(50ms);
+                                ThisThread::sleep_for(1200ms);
                                 Pipetadora_MoveTo   (2, 0);  // sobe
                                 ThisThread::sleep_for(50ms);
 
