@@ -378,6 +378,11 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
         } else if (delta < 0) {
             // subida do Z (positionZ decrementa)
             while (positionZ > targetSteps) {
+                // interrupção imediata em caso de emergência
+                if (!emergPin.read()) {
+                    coilsZ = 0;
+                    return;
+                }
                 // se bateu no fim-de-curso inferior, sai
                 if (endMinZ->read()) {
                     break;
