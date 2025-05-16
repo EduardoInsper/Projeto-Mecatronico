@@ -39,16 +39,6 @@ static bool upFlag, downFlag, enterFlag, backFlag;
 static int  numSolta       = 0;
 static volatile bool emergActive = false;
 
-// função utilitária para zerar homing e pontos de coleta/solta
-void clearMemory(){
-    homed = false;
-    pontosColeta.pos[0] = pontosColeta.pos[1] = pontosColeta.pos[2] = 0;
-    for(int i = 0; i < MAX_POINTS; ++i){
-        pontosSolta[i].pos[0] = pontosSolta[i].pos[1] = pontosSolta[i].pos[2] = 0;
-        volumeSolta[i] = 0;
-    }
-    numSolta = 0;
-}
 // Menu definitions
 #define MAIN_COUNT 3
 #define SUB_COUNT  4
@@ -77,6 +67,16 @@ void drawMainMenuAnim() {
     }
     cursor = 0; inSubmenu = false;
     lcd.locate(0,1); lcd.putc('>');
+}
+// função utilitária para zerar homing e pontos de coleta/solta
+void clearMemory(){
+    homed = false;
+    pontosColeta.pos[0] = pontosColeta.pos[1] = pontosColeta.pos[2] = 0;
+    for(int i = 0; i < MAX_POINTS; ++i){
+        pontosSolta[i].pos[0] = pontosSolta[i].pos[1] = pontosSolta[i].pos[2] = 0;
+        volumeSolta[i] = 0;
+    }
+    numSolta = 0;
 }
 
 // Redraw main menu
@@ -125,7 +125,6 @@ int main() {
 
     while (true) {
         // 1) Verifica emergência
-        // 1a) Emergência tem prioridade máxima
         if (emergActive) {
             Pipetadora_StopAll();
             lcd.cls(); lcd.printf("!!! EMERGÊNCIA !!!");
@@ -158,10 +157,9 @@ int main() {
                         lcd.cls(); lcd.printf("Referenciando..."); Pipetadora_Homing(); homed=true;
                         drawMainMenu(); break;
                     case 1: // Mov Manual
-                lcd.cls(); lcd.printf("Mov Manual");
-                // fica em manual até Back ou Emergência
-                while (!backFlag && !emergActive)
-                    Pipetadora_ManualControl();
+                        lcd.cls(); lcd.printf("Mov Manual");
+                        // fica em manual até Back
+                        while (!backFlag) Pipetadora_ManualControl();
                         backFlag = false;
                         // garante parada imediata de TODOS os motores
                         Pipetadora_StopAll();
@@ -180,7 +178,7 @@ int main() {
                 switch (cursor) {
                     case 0: { // Config Coleta
                         lcd.cls(); lcd.printf("Posicione e Enter");
-                        while (!enterFlag && !backFlag && !emergActive) Pipetadora_ManualControl();
+                        while (!enterFlag && !backFlag) Pipetadora_ManualControl();
                         if (enterFlag) {
                             pontosColeta.pos[0] = Pipetadora_GetPositionSteps(0);
                             pontosColeta.pos[1] = Pipetadora_GetPositionSteps(1);
@@ -195,7 +193,7 @@ int main() {
                         lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta);
                         // 1) escolhe quantos pontos
                         bool doneQtd=false;
-                        while (!doneQtd && !emergActive) {
+                        while (!doneQtd) {
                             if (upFlag   && numSolta<MAX_POINTS) { numSolta++; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); upFlag=false; }
                             if (downFlag && numSolta>0)           { numSolta--; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); downFlag=false; }
                             if (enterFlag) { enterFlag=false; doneQtd=true; }
@@ -206,7 +204,7 @@ int main() {
                         for (int i=0; i<numSolta; i++) {
                             // posição
                             lcd.cls(); lcd.printf("Mov PtoS %d", i+1);
-                        while (!backFlag && !emergActive) Pipetadora_ManualControl();
+                            while (!enterFlag) Pipetadora_ManualControl();
                             enterFlag=false;
                             pontosSolta[i].pos[0] = Pipetadora_GetPositionSteps(0);
                             pontosSolta[i].pos[1] = Pipetadora_GetPositionSteps(1);
@@ -214,7 +212,7 @@ int main() {
                             // volume
                             volumeSolta[i] = 1;  // default
                             bool doneVol=false;
-                            while (!doneVol && !emergActive) {
+                            while (!doneVol) {
                                 lcd.cls(); lcd.printf("Vol Pto%d:%d mL", i+1, volumeSolta[i]);
                                 if (upFlag)   { volumeSolta[i]++; upFlag=false; }
                                 if (downFlag && volumeSolta[i]>1) { volumeSolta[i]--; downFlag=false; }
@@ -251,10 +249,10 @@ int main() {
                         Pipetadora_MoveTo(2, 0); ThisThread::sleep_for(50ms);
 
                         // Para cada ponto de soltura
-                        for (int j=0; j<numSolta && !emergActive; j++) {
+                        for (int j=0; j<numSolta; j++) {
                             int needed = volumeSolta[j];
-                            int done   = 0;
-                            while (done < needed && !emergActive) {
+                            int done    = 0;
+                            while (done < needed) {
                                 // 1) aspirar 1 mL no ponto de coleta
                                 Pipetadora_MoveLinear(pontosColeta.pos[0], pontosColeta.pos[1]);
                                 ThisThread::sleep_for(50ms);
