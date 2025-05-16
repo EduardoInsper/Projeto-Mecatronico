@@ -19,7 +19,7 @@ InterruptIn buttonUp   (BTN_XUP,   PullDown);
 InterruptIn buttonDown (BTN_XDWN,  PullDown);
 InterruptIn buttonEnter(BTN_ENTER, PullDown);
 InterruptIn buttonBack (BTN_BACK,  PullDown);
-InterruptIn buttonEmerg(EMER_2,    PullDown);
+InterruptIn buttonEmerg(EMER_2,    PullUp);
 
 // Debounce timer
 Timer debounceTimer;
@@ -35,9 +35,20 @@ static int  volumeSolta[MAX_POINTS] = {0};  // volume desejado em mL para cada p
 static bool homed = false;         // indica se homing já foi feito
 static int  cursor         = 0;
 static bool inSubmenu      = false;
-static bool upFlag, downFlag, enterFlag, backFlag, emergFlag;
+static bool upFlag, downFlag, enterFlag, backFlag;
 static int  numSolta       = 0;
+static volatile bool emergActive = false;
 
+// função utilitária para zerar homing e pontos de coleta/solta
+void clearMemory(){
+    homed = false;
+    pontosColeta.pos[0] = pontosColeta.pos[1] = pontosColeta.pos[2] = 0;
+    for(int i = 0; i < MAX_POINTS; ++i){
+        pontosSolta[i].pos[0] = pontosSolta[i].pos[1] = pontosSolta[i].pos[2] = 0;
+        volumeSolta[i] = 0;
+    }
+    numSolta = 0;
+}
 // Menu definitions
 #define MAIN_COUNT 3
 #define SUB_COUNT  4
@@ -46,7 +57,8 @@ const char* mainMenu[MAIN_COUNT] = { "Referenciamento", "Mov Manual", "Pipetador
 const char* subMenu[SUB_COUNT]  = { "Config Coleta", "Config Solta", "Reset Mem", "Iniciar" };
 
 // ISR handlers
-void isrEmerg() { emergFlag = true; }
+void isrEmergPress()   { emergActive = true; }   // nível 0 → entra em emergência
+void isrEmergRelease() { emergActive = false; }  // nível 1 → sai de emergência
 void isrUp()    { if (debounceTimer.elapsed_time() >= 200ms) { debounceTimer.reset(); upFlag    = true; } }
 void isrDown()  { if (debounceTimer.elapsed_time() >= 200ms) { debounceTimer.reset(); downFlag  = true; } }
 void isrEnter() { if (debounceTimer.elapsed_time() >= 200ms) { debounceTimer.reset(); enterFlag = true; } }
@@ -106,17 +118,24 @@ int main() {
     buttonDown.rise(&isrDown);
     buttonEnter.rise(&isrEnter);
     buttonBack.rise(&isrBack);
-    buttonEmerg.rise(&isrEmerg);
+    buttonEmerg.fall(&isrEmergPress);
+    buttonEmerg.rise(&isrEmergRelease);
     drawMainMenuAnim();
     drawMainMenu();
 
     while (true) {
         // 1) Verifica emergência
-        if (emergFlag) {
-            Pipetadora_StopAll(); lcd.cls(); lcd.printf("!!! EMERGÊNCIA !!!");
-            while (!backFlag) ThisThread::sleep_for(50ms);
-            emergFlag = backFlag = false; inSubmenu = false; cursor = 0;
-            drawMainMenu(); continue;
+        // 1a) Emergência tem prioridade máxima
+        if (emergActive) {
+            Pipetadora_StopAll();
+            lcd.cls(); lcd.printf("!!! EMERGÊNCIA !!!");
+            // mantém a tela até o nível voltar a 1
+            while (emergActive) ThisThread::sleep_for(50ms);
+            // ao liberar, zera tudo e retorna ao menu principal
+            clearMemory();
+            cursor = 0; inSubmenu = false;
+            drawMainMenu();
+            continue;
         }
 
         // 2) Navegação
@@ -139,9 +158,10 @@ int main() {
                         lcd.cls(); lcd.printf("Referenciando..."); Pipetadora_Homing(); homed=true;
                         drawMainMenu(); break;
                     case 1: // Mov Manual
-                        lcd.cls(); lcd.printf("Mov Manual");
-                        // fica em manual até Back
-                        while (!backFlag) Pipetadora_ManualControl();
+                lcd.cls(); lcd.printf("Mov Manual");
+                // fica em manual até Back ou Emergência
+                while (!backFlag && !emergActive)
+                    Pipetadora_ManualControl();
                         backFlag = false;
                         // garante parada imediata de TODOS os motores
                         Pipetadora_StopAll();
@@ -160,7 +180,7 @@ int main() {
                 switch (cursor) {
                     case 0: { // Config Coleta
                         lcd.cls(); lcd.printf("Posicione e Enter");
-                        while (!enterFlag && !backFlag) Pipetadora_ManualControl();
+                        while (!enterFlag && !backFlag && !emergActive) Pipetadora_ManualControl();
                         if (enterFlag) {
                             pontosColeta.pos[0] = Pipetadora_GetPositionSteps(0);
                             pontosColeta.pos[1] = Pipetadora_GetPositionSteps(1);
@@ -175,7 +195,7 @@ int main() {
                         lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta);
                         // 1) escolhe quantos pontos
                         bool doneQtd=false;
-                        while (!doneQtd) {
+                        while (!doneQtd && !emergActive) {
                             if (upFlag   && numSolta<MAX_POINTS) { numSolta++; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); upFlag=false; }
                             if (downFlag && numSolta>0)           { numSolta--; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); downFlag=false; }
                             if (enterFlag) { enterFlag=false; doneQtd=true; }
@@ -186,7 +206,7 @@ int main() {
                         for (int i=0; i<numSolta; i++) {
                             // posição
                             lcd.cls(); lcd.printf("Mov PtoS %d", i+1);
-                            while (!enterFlag) Pipetadora_ManualControl();
+                        while (!backFlag && !emergActive) Pipetadora_ManualControl();
                             enterFlag=false;
                             pontosSolta[i].pos[0] = Pipetadora_GetPositionSteps(0);
                             pontosSolta[i].pos[1] = Pipetadora_GetPositionSteps(1);
@@ -194,7 +214,7 @@ int main() {
                             // volume
                             volumeSolta[i] = 1;  // default
                             bool doneVol=false;
-                            while (!doneVol) {
+                            while (!doneVol && !emergActive) {
                                 lcd.cls(); lcd.printf("Vol Pto%d:%d mL", i+1, volumeSolta[i]);
                                 if (upFlag)   { volumeSolta[i]++; upFlag=false; }
                                 if (downFlag && volumeSolta[i]>1) { volumeSolta[i]--; downFlag=false; }
@@ -231,10 +251,10 @@ int main() {
                         Pipetadora_MoveTo(2, 0); ThisThread::sleep_for(50ms);
 
                         // Para cada ponto de soltura
-                        for (int j=0; j<numSolta; j++) {
+                        for (int j=0; j<numSolta && !emergActive; j++) {
                             int needed = volumeSolta[j];
-                            int done    = 0;
-                            while (done < needed) {
+                            int done   = 0;
+                            while (done < needed && !emergActive) {
                                 // 1) aspirar 1 mL no ponto de coleta
                                 Pipetadora_MoveLinear(pontosColeta.pos[0], pontosColeta.pos[1]);
                                 ThisThread::sleep_for(50ms);

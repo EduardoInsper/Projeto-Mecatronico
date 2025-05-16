@@ -1,6 +1,8 @@
 #include "mbed.h"
 #include "pinos.h"
 #include "Pipetadora.h"
+
+static DigitalIn emergPin(EMER_2, PullUp);
 using namespace std::chrono;
 using namespace std::chrono_literals;
 // configurações de tempo de pipeta
@@ -206,6 +208,7 @@ static void HomingXY(void) {
     Mover_Frente(MotorX);
     Mover_Tras(MotorY);
     while (tickerOn[MotorX] || tickerOn[MotorY]) {
+        if (!emergPin.read()) return;    // aborta se emergência
         if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
         if (tickerOn[MotorY] && endMin [MotorY]->read()) Parar_Mov(MotorY);
         ThisThread::sleep_for(1ms);
@@ -221,10 +224,10 @@ static void homingZ(void) {
 
     // Sobe até acionar o fim de curso superior (ZUP)
     while (!endMaxZ->read()) {
+        if (!emergPin.read()) return;    // aborta se emergência
         stepZForward();
         ThisThread::sleep_for(VEL_STEP_MS_Z);
     }
-
     // Ao atingir ZUP, zera posição e marca este ponto como zero
     coilsZ = 0;
     positionZ = 0;  // home no topo → posição = 0
@@ -340,11 +343,17 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
         int32_t delta   = targetSteps - current;
         if (delta > 0) {
             Mover_Frente(id);
-            while (position[id] < targetSteps) ThisThread::sleep_for(1ms);
+            while (position[id] < targetSteps) {
+                if (!emergPin.read()) return;
+                ThisThread::sleep_for(1ms);
+            }
             Parar_Mov(id);
         } else if (delta < 0) {
             Mover_Tras(id);
-            while (position[id] > targetSteps) ThisThread::sleep_for(1ms);
+            while (position[id] > targetSteps) {
+                if (!emergPin.read()) return;
+                ThisThread::sleep_for(1ms);
+            }
             Parar_Mov(id);
         }
     } else if (id == MotorCount) {
@@ -354,13 +363,11 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
         int32_t delta = targetSteps - positionZ;
         if (delta > 0) {
             // descida do Z (positionZ incrementa)
-            while (positionZ < targetSteps) {
-                // se bateu no fim-de-curso superior, marca home e sai
-                if (endMaxZ->read()) {
-                    positionZ = 0;
-                    break;
-                }
-                stepZForward();
+            while (positionZ > targetSteps) {
+                if (!emergPin.read()) return;
+                // se bateu no fim-de-curso inferior, sai
+                if (endMinZ->read()) break;
+                stepZBackward();
                 ThisThread::sleep_for(VEL_STEP_MS_Z);
             }
         } else if (delta < 0) {
@@ -403,6 +410,7 @@ extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
 
     // espera ambos terminarem
     while (tickerOn[MotorX] || tickerOn[MotorY]) {
+        if (!emergPin.read()) break;    // sai imediatamente
         ThisThread::sleep_for(1ms);
     }
 
@@ -415,6 +423,7 @@ extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
 
 // Aciona válvula por volume_ml mL
 extern "C" void Pipetadora_ActuateValve(int volume_ml) {
+    if (!emergPin.read()) return;
     pipette->write(1);
     ThisThread::sleep_for(std::chrono::milliseconds(volume_ml * TIME_PER_ML_MS));
     pipette->write(0);
