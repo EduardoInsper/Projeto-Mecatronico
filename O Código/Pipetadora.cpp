@@ -434,9 +434,9 @@ extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
 // Aciona válvula por volume_ml mL
 extern "C" void Pipetadora_ActuateValve(int volume_ml) {
     if (!emergPin.read()) return;
-    pipette->write(1);
-    ThisThread::sleep_for(50ms);
     pipette->write(0);
+    ThisThread::sleep_for(50ms);
+    pipette->write(1);
 }
 
 // Para imediatamente todos os movimentos e desativa bobinas (emergência)
