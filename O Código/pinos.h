@@ -8,8 +8,8 @@
 //======================================================================
 #define FDC_YUP   PA_6 
 #define FDC_YDWN  PA_7 
-#define FDC_XUP   PA_9
-#define FDC_XDWN  PC_5 
+#define FDC_XUP   PC_9
+#define FDC_XDWN  PA_5 
 #define FDC_ZUP   PC_8 
 #define FDC_ZDWN  PC_6 
 

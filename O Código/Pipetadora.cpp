@@ -66,7 +66,7 @@ static void stepLinearX_wrapper();
 static void stepLinearY_wrapper();
 
 // — Controle direto do Z
-static constexpr auto     VEL_STEP_MS_Z = 3ms; // ms entre passos Z (chrono)
+static constexpr auto     VEL_STEP_MS_Z = 2ms; // ms entre passos Z (chrono)
 static constexpr uint8_t  SEQ_Z[4]      = { 0b0001, 0b0010, 0b0100, 0b1000 };
 static BusOut coilsZ(Z_A1, Z_A2, Z_B1, Z_B2);
 
