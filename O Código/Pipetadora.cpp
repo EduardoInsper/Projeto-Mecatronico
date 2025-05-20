@@ -145,17 +145,31 @@ void Pipetadora_ManualControl(void) {
     {
         bool upX = btnUp[MotorX]->read();
         bool dnX = btnDwn[MotorX]->read();
-        if      (upX && !dnX) { 
-            if (!tickerOn[MotorX] || dirState[MotorX] != 0) 
-                Mover_Frente(MotorX); 
-        }
-        else if (dnX && !upX) { 
-            if (!tickerOn[MotorX] || dirState[MotorX] != 1) 
-                Mover_Tras(MotorX);
-        }
-        else { 
-            if (tickerOn[MotorX]) 
-                Parar_Mov(MotorX);
+        if(!sw){
+            if      (upX && !dnX) { 
+                if (!tickerOn[MotorX] || dirState[MotorX] != 0) 
+                    Mover_Frente(MotorX); 
+            }
+            else if (dnX && !upX) { 
+                if (!tickerOn[MotorX] || dirState[MotorX] != 1) 
+                    Mover_Tras(MotorX);
+            }
+            else { 
+                if (tickerOn[MotorX]) 
+                    Parar_Mov(MotorX);
+            }
+        }else {
+            // Modo Z manual (usa mesmos botões Up/Down de Y)
+            if      (upX && !dnX) {
+                stepZForward();
+            }
+            else if (dnX && !upX) {
+                stepZBackward();
+            }
+            else {
+                // Nenhum botão; desliga bobinas Z
+                coilsZ = 0;
+            }
         }
     }
 
@@ -164,7 +178,6 @@ void Pipetadora_ManualControl(void) {
         bool upY = btnUp[MotorY]->read();
         bool dnY = btnDwn[MotorY]->read();
 
-        if (!sw) {
             // Modo Y normal
             if      (upY && !dnY) { 
                 if (!tickerOn[MotorY] || dirState[MotorY] != 0) 
@@ -178,19 +191,6 @@ void Pipetadora_ManualControl(void) {
                 if (tickerOn[MotorY]) 
                     Parar_Mov(MotorY);
             }
-        } else {
-            // Modo Z manual (usa mesmos botões Up/Down de Y)
-            if      (upY && !dnY) {
-                stepZForward();
-            }
-            else if (dnY && !upY) {
-                stepZBackward();
-            }
-            else {
-                // Nenhum botão; desliga bobinas Z
-                coilsZ = 0;
-            }
-        }
     }
 
     // Pequeno delay para suavizar;
