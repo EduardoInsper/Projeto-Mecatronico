@@ -26,6 +26,11 @@ static microseconds br_periodX, br_periodY;
 // — Identificadores de eixos X e Y
 enum MotorId { MotorX = 0, MotorY = 1, MotorCount };
 
+// — Estado de toggle para selecionar Y (false) ou Z (true)
+static bool swMode = false;
+static bool prevSwRaw = false;
+
+
 // — Parâmetros de velocidade e aceleração (X e Y)
 static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1000us, 800us };
 static constexpr microseconds PERIODO_MINIMO  [MotorCount] = {  225us, 225us };
@@ -127,8 +132,14 @@ static void stepZBackward() {
     positionZ--;
 }
 void Pipetadora_ManualControl(void) {
-    // Lê o switch físico (0 → controlar Y; 1 → controlar Z)
-    bool sw = switchSelect->read();
+    // Leitura do botão de toggle em click: inverte swMode em cada pressionamento
+    bool raw = switchSelect->read();
+    if (raw && !prevSwRaw) {
+        swMode = !swMode;
+    }
+    prevSwRaw = raw;
+    // swMode == false → eixo Y; swMode == true → eixo Z
+    bool sw = swMode;
 
     // Movimento manual do eixo X (inalterado)
     {
