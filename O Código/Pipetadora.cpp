@@ -136,6 +136,10 @@ void Pipetadora_ManualControl(void) {
     bool raw = switchSelect->read();
     if (raw && !prevSwRaw) {
         swMode = !swMode;
+        // ao trocar de modo, interrompe qualquer movimento pendente
+        Parar_Mov(MotorX);
+        Parar_Mov(MotorY);
+        coilsZ = 0;
     }
     prevSwRaw = raw;
     // swMode == false → eixo Y; swMode == true → eixo Z
@@ -178,19 +182,19 @@ void Pipetadora_ManualControl(void) {
         bool upY = btnUp[MotorY]->read();
         bool dnY = btnDwn[MotorY]->read();
 
-            // Modo Y normal
-            if      (upY && !dnY) { 
-                if (!tickerOn[MotorY] || dirState[MotorY] != 0) 
-                    Mover_Frente(MotorY); 
-            }
-            else if (dnY && !upY) { 
-                if (!tickerOn[MotorY] || dirState[MotorY] != 1) 
-                    Mover_Tras(MotorY);
-            }
-            else { 
-                if (tickerOn[MotorY]) 
-                    Parar_Mov(MotorY);
-            }
+        // Modo Y normal
+        if      (upY && !dnY) { 
+            if (!tickerOn[MotorY] || dirState[MotorY] != 0) 
+                Mover_Frente(MotorY); 
+        }
+        else if (dnY && !upY) { 
+            if (!tickerOn[MotorY] || dirState[MotorY] != 1) 
+                Mover_Tras(MotorY);
+        }
+        else { 
+            if (tickerOn[MotorY]) 
+                Parar_Mov(MotorY);
+        }
     }
 
     // Pequeno delay para suavizar;
