@@ -269,7 +269,7 @@ int main() {
                                 Pipetadora_MoveTo   (2, pontosColeta.pos[2]);
                                 ThisThread::sleep_for(50ms);
                                 Pipetadora_ActuateValve(1);  // aspira
-                                for (int t = 0; t < 1200; t += 50) {
+                                for (int t = 0; t < 2000; t += 50) {
                                     if (emergActive) break;
                                     ThisThread::sleep_for(50ms);
                                 }
