@@ -293,7 +293,7 @@ int main() {
                             }
                             if (emergActive) break;
                         }
-
+                        if (emergActive) break;
                         lcd.cls(); lcd.printf("Concluido"); ThisThread::sleep_for(800ms);
                         inSubmenu = false; cursor = 0;
                         drawMainMenu();
