@@ -195,13 +195,13 @@ int main() {
                     case 0: { // Config Coleta
                         lcd.cls(); lcd.printf("Posicione e Enter");
                         bool lastSw = Pipetadora_GetToggleMode();
-                        lcd.locate(17,0);
+                        lcd.locate(17,4);
                         lcd.printf(lastSw ? "Z/Y" : "X/Y");
                         while (!enterFlag && !backFlag && !emergActive) {
                             Pipetadora_ManualControl();
                             bool sw = Pipetadora_GetToggleMode();
                             if (sw != lastSw) {
-                                lcd.locate(17,0);
+                                lcd.locate(17,4);
                                 lcd.printf(sw ? "Z/Y" : "X/Y");
                                 lastSw = sw;
                             }
@@ -232,13 +232,13 @@ int main() {
                         for (int i = 0; i < numSolta; ++i) {
                             lcd.cls(); lcd.printf("Mov PtoS %d", i+1);
                             bool lastSw = Pipetadora_GetToggleMode();
-                            lcd.locate(17,0);
+                            lcd.locate(17,4);
                             lcd.printf(lastSw ? "Z/Y" : "X/Y");
                             while (!enterFlag && !backFlag && !emergActive) {
                                 Pipetadora_ManualControl();
                                 bool sw = Pipetadora_GetToggleMode();
                                 if (sw != lastSw) {
-                                    lcd.locate(17,0);
+                                    lcd.locate(17,4);
                                     lcd.printf(sw ? "Z/Y" : "X/Y");
                                     lastSw = sw;
                                 }
