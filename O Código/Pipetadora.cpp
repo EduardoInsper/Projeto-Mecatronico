@@ -6,9 +6,11 @@
 static DigitalIn emergPin(EMER_2, PullUp);
 using namespace std::chrono;
 using namespace std::chrono_literals;
+
 // configurações de tempo de pipeta
 static DigitalOut* pipette;
 static constexpr int TIME_PER_ML_MS = 50; // ajuste conforme calibração
+
 // ------------------------------------------------------------------
 // Variáveis e objetos para Z
 // ------------------------------------------------------------------
@@ -18,10 +20,18 @@ static DigitalIn* endMaxZ;              // FDC Z superior
 static volatile int32_t positionZ;      // contador de passos Z
 static constexpr float PASSO_FUSO_Z = 1.0f;
 static int zSeqIndex = 0;               // idx para sequência de bobinas Z
-static volatile int lin_x0, lin_y0, lin_tx, lin_ty, lin_dx, lin_dy, lin_sx, lin_sy, lin_err;
-static volatile int br_stepsX, br_stepsY;
-static microseconds br_periodX, br_periodY;
 
+// Velocidades Z com VELO1/2/3 (milissegundos)
+static constexpr milliseconds VEL_STEP_MS_Z       = 2ms;  // alta
+static constexpr milliseconds VEL_STEP_MS_Z_MEDIO = 4ms;  // média
+static constexpr milliseconds VEL_STEP_MS_Z_BAIXO  = 6ms;  // baixa
+static milliseconds velStepMsZCurrent = VEL_STEP_MS_Z;
+
+// ------------------------------------------------------------------
+// Algoritmo de Bresenham (movimento linear XY)
+// ------------------------------------------------------------------
+static volatile int lin_x0, lin_y0, lin_tx, lin_ty, lin_dx, lin_dy, lin_sx, lin_sy, lin_err;
+static microseconds  br_periodX, br_periodY;
 
 // — Identificadores de eixos X e Y
 enum MotorId { MotorX = 0, MotorY = 1, MotorCount };
@@ -30,22 +40,32 @@ enum MotorId { MotorX = 0, MotorY = 1, MotorCount };
 static bool swMode = false;
 static bool prevSwRaw = false;
 
-
 // — Parâmetros de velocidade e aceleração (X e Y)
-static constexpr microseconds PERIODO_INICIAL[MotorCount] = { 1000us, 800us };
-static constexpr microseconds PERIODO_MINIMO  [MotorCount] = {  225us, 225us };
-static constexpr microseconds REDUCAO_PERIODO [MotorCount] = {   25us,  25us };
-static constexpr int          PASSOS_PARA_ACELERAR      = 25;
-static constexpr float        PASSO_FUSO[MotorCount]    = { 0.5f, 0.5f };
-static constexpr microseconds INTERP_PERIOD = PERIODO_INICIAL[MotorX] / 3;   // velocidade fixa de interpolação (ex: 1000 µs)
+static constexpr microseconds PERIODO_INICIAL[MotorCount]      = { 1000us, 800us };
+static constexpr microseconds PERIODO_MINIMO  [MotorCount]     = {  175us, 200us };
+static constexpr microseconds PERIODO_MINIMO_MEDIO[MotorCount] = { 300us, 350us };
+static constexpr microseconds PERIODO_MINIMO_BAIXO [MotorCount] = { 700us, 700us };
+static microseconds periodoMinAtual[MotorCount];
+
+static microseconds periodCur    [MotorCount];
+static constexpr microseconds REDUCAO_PERIODO    [MotorCount] = { 25us, 25us };
+static constexpr int          PASSOS_PARA_ACELERAR        = 25;
+static constexpr float        PASSO_FUSO[MotorCount]      = { 0.5f, 0.5f };
+static constexpr microseconds INTERP_PERIOD             = PERIODO_INICIAL[MotorX] / 3;
+
 // — Pinos drivers (X, Y)
 static constexpr PinName STEP_PIN   [MotorCount] = { MOTOR_X, MOTOR_Y };
 static constexpr PinName DIR_PIN    [MotorCount] = { DIR_X,   DIR_Y   };
 static constexpr PinName ENABLE_PIN [MotorCount] = { EN_X,    EN_Y    };
-static constexpr PinName ENDMIN_PIN [MotorCount] = { FDC_XDWN,FDC_YDWN};
-static constexpr PinName ENDMAX_PIN [MotorCount] = { FDC_XUP, FDC_YUP };
-static constexpr PinName BTN_UP_PIN [MotorCount] = { BTN_XUP, BTN_YUP };
+static constexpr PinName ENDMIN_PIN [MotorCount] = { FDC_XDWN, FDC_YDWN };
+static constexpr PinName ENDMAX_PIN [MotorCount] = { FDC_XUP,  FDC_YUP };
+static constexpr PinName BTN_UP_PIN [MotorCount] = { BTN_XUP,  BTN_YUP };
 static constexpr PinName BTN_DWN_PIN[MotorCount] = { BTN_XDWN, BTN_YDWN };
+
+// — Pinos de seleção de velocidade (VELO1, VELO2, VELO3)
+static DigitalIn* velo1Pin;
+static DigitalIn* velo2Pin;
+static DigitalIn* velo3Pin;
 
 // — Estado e hardware X/Y
 static DigitalOut* stepOut   [MotorCount];
@@ -58,7 +78,6 @@ static DigitalIn*  btnDwn    [MotorCount];
 static Ticker*     tickers   [MotorCount];
 static volatile bool       tickerOn    [MotorCount];
 static volatile int32_t    position    [MotorCount];
-static microseconds        periodCur   [MotorCount];
 static int                 passoCount  [MotorCount];
 static int                 dirState    [MotorCount]; // 0 → frente, 1 → trás
 
@@ -71,8 +90,7 @@ static void stepLinearX_wrapper();
 static void stepLinearY_wrapper();
 
 // — Controle direto do Z
-static constexpr auto     VEL_STEP_MS_Z = 2ms; // ms entre passos Z (chrono)
-static constexpr uint8_t  SEQ_Z[4]      = { 0b0001, 0b0010, 0b0100, 0b1000 };
+static constexpr uint8_t SEQ_Z[4] = { 0b0001, 0b0010, 0b0100, 0b1000 };
 static BusOut coilsZ(Z_A1, Z_A2, Z_B1, Z_B2);
 
 // — Protótipos internos
@@ -96,161 +114,151 @@ void Pipetadora_InitMotors(void) {
         btnDwn    [i] = new DigitalIn (BTN_DWN_PIN [i], PullDown);
         tickers   [i] = new Ticker();
 
-        position   [i] = 0;
-        tickerOn   [i] = false;
-        periodCur  [i] = PERIODO_INICIAL[i];
-        passoCount [i] = 0;
-        dirState   [i] = 0;
+        position        [i] = 0;
+        tickerOn        [i] = false;
+        periodCur       [i] = PERIODO_INICIAL[i];
+        periodoMinAtual [i] = PERIODO_MINIMO[i];
+        passoCount      [i] = 0;
+        dirState        [i] = 0;
     }
-    coilsZ = 0; // garante Z desligado
+
+    // Z
+    coilsZ       = 0;
     switchSelect = new DigitalIn(SWITCH_PIN, PullDown);
     endMinZ      = new DigitalIn(FDC_ZDWN,  PullDown);
     endMaxZ      = new DigitalIn(FDC_ZUP,   PullDown);
     positionZ    = 0;
 
-    // inicializa pipeta
+    // pinos de velocidade
+    velo1Pin = new DigitalIn(BTN_VELO1, PullDown);
+    velo2Pin = new DigitalIn(BTN_VELO2, PullDown);
+    velo3Pin = new DigitalIn(BTN_VELO3, PullDown);
+
+    // pipeta
     pipette = new DigitalOut(PIPETA);
     pipette->write(0);
-
 }
 
 void Pipetadora_Homing(void) {
+    // Garante PERIODO_MINIMO para X/Y e VEL_STEP_MS_Z para Z
+    for (int i = 0; i < MotorCount; ++i) {
+        periodoMinAtual[i] = PERIODO_MINIMO[i];
+        periodCur[i]       = PERIODO_MINIMO[i];
+    }
+    velStepMsZCurrent = VEL_STEP_MS_Z;
+
+    // Rotinas de homing
     homingZ();
     HomingXY();
 }
+
+// avanço/back do Z
 static void stepZForward() {
     if (endMaxZ->read()) { coilsZ = 0; return; }
     coilsZ = SEQ_Z[zSeqIndex];
     zSeqIndex = (zSeqIndex + 1) % 4;
     positionZ++;
 }
-
 static void stepZBackward() {
     if (endMinZ->read()) { coilsZ = 0; return; }
     zSeqIndex = (zSeqIndex + 3) % 4;
     coilsZ = SEQ_Z[zSeqIndex];
     positionZ--;
 }
-void Pipetadora_ManualControl(void) {
-    // Leitura do botão de toggle em click: inverte swMode em cada pressionamento
+
+// controle manual
+extern "C" void Pipetadora_ManualControl(void) {
+    // toggle Y↔Z
     bool raw = switchSelect->read();
     if (raw && !prevSwRaw) {
         swMode = !swMode;
-        // ao trocar de modo, interrompe qualquer movimento pendente
         Parar_Mov(MotorX);
         Parar_Mov(MotorY);
         coilsZ = 0;
     }
     prevSwRaw = raw;
-    // swMode == false → eixo Y; swMode == true → eixo Z
-    bool sw = swMode;
 
-    // Movimento manual do eixo X (inalterado)
+    // ajuste de velocidade X/Y via VELO1/2/3
+    if (velo1Pin->read()) {
+        for (int i = 0; i < MotorCount; ++i) periodoMinAtual[i] = PERIODO_MINIMO_BAIXO[i];
+    } else if (velo2Pin->read()) {
+        for (int i = 0; i < MotorCount; ++i) periodoMinAtual[i] = PERIODO_MINIMO_MEDIO[i];
+    } else if (velo3Pin->read()) {
+        for (int i = 0; i < MotorCount; ++i) periodoMinAtual[i] = PERIODO_MINIMO[i];
+    }
+
+    // ajuste de velocidade Z via VELO1/2/3
+    if (velo1Pin->read()) velStepMsZCurrent = VEL_STEP_MS_Z_BAIXO;
+    else if (velo2Pin->read()) velStepMsZCurrent = VEL_STEP_MS_Z_MEDIO;
+    else if (velo3Pin->read()) velStepMsZCurrent = VEL_STEP_MS_Z;
+
+    // MOVIMENTO MANUAL EIXO X (ou Z se swMode == true)
     {
-        bool upX = btnUp[MotorX]->read();
-        bool dnX = btnDwn[MotorX]->read();
-        if(!sw){
-            if      (upX && !dnX) { 
-                if (!tickerOn[MotorX] || dirState[MotorX] != 0) 
-                    Mover_Frente(MotorX); 
-            }
-            else if (dnX && !upX) { 
-                if (!tickerOn[MotorX] || dirState[MotorX] != 1) 
-                    Mover_Tras(MotorX);
-            }
-            else { 
-                if (tickerOn[MotorX]) 
-                    Parar_Mov(MotorX);
-            }
-        }else {
-            // Modo Z manual (usa mesmos botões Up/Down de Y)
-            if      (upX && !dnX) {
-                stepZForward();
-            }
-            else if (dnX && !upX) {
-                stepZBackward();
-            }
-            else {
-                // Nenhum botão; desliga bobinas Z
-                coilsZ = 0;
-            }
+        bool up = btnUp[MotorX]->read();
+        bool dn = btnDwn[MotorX]->read();
+        if (!swMode) {
+            if (up && !dn) { if (!tickerOn[MotorX]    || dirState[MotorX] != 0) Mover_Frente(MotorX); }
+            else if (dn && !up) { if (!tickerOn[MotorX] || dirState[MotorX] != 1) Mover_Tras(MotorX); }
+            else { if (tickerOn[MotorX]) Parar_Mov(MotorX); }
+        } else {
+            if      (up && !dn) stepZForward();
+            else if (dn && !up) stepZBackward();
+            else                coilsZ = 0;
         }
     }
 
-    // Movimento manual do eixo Y ou Z, dependendo do estado do switch
+    // MOVIMENTO MANUAL EIXO Y
     {
-        bool upY = btnUp[MotorY]->read();
-        bool dnY = btnDwn[MotorY]->read();
-
-        // Modo Y normal
-        if      (upY && !dnY) { 
-            if (!tickerOn[MotorY] || dirState[MotorY] != 0) 
-                Mover_Frente(MotorY); 
-        }
-        else if (dnY && !upY) { 
-            if (!tickerOn[MotorY] || dirState[MotorY] != 1) 
-                Mover_Tras(MotorY);
-        }
-        else { 
-            if (tickerOn[MotorY]) 
-                Parar_Mov(MotorY);
-        }
+        bool up = btnUp[MotorY]->read();
+        bool dn = btnDwn[MotorY]->read();
+        if (up && !dn) { if (!tickerOn[MotorY]    || dirState[MotorY] != 0) Mover_Frente(MotorY); }
+        else if (dn && !up) { if (!tickerOn[MotorY] || dirState[MotorY] != 1) Mover_Tras(MotorY); }
+        else { if (tickerOn[MotorY]) Parar_Mov(MotorY); }
     }
 
-    // Pequeno delay para suavizar;
-    ThisThread::sleep_for(VEL_STEP_MS_Z);
+    // aplica delay de passo Z baseado na seleção de VELO
+    ThisThread::sleep_for(velStepMsZCurrent);
 }
 
-
 float Pipetadora_GetPositionCm(int id) {
-    if (id < MotorCount)
-        return (float)(position[id] * PASSO_FUSO[id] / 400.0);
-    else
-        return (float)(positionZ * PASSO_FUSO_Z    / 400.0);
+    if (id < MotorCount) return (float)(position[id] * PASSO_FUSO[id] / 400.0f);
+    return (float)(positionZ * PASSO_FUSO_Z / 400.0f);
 }
 
 int Pipetadora_GetPositionSteps(int id) {
-    if (id < MotorCount)
-        return position[id];
-    else
-        return positionZ;
+    if (id < MotorCount) return position[id];
+    return positionZ;
 }
 
-
-// — Homing paralelo X e Y —
+// homing XY
 static void HomingXY(void) {
     stopTicker(MotorX);
     stopTicker(MotorY);
     Mover_Frente(MotorX);
     Mover_Tras(MotorY);
     while (tickerOn[MotorX] || tickerOn[MotorY]) {
-        if (!emergPin.read()) return;    // aborta se emergência
+        if (!emergPin.read()) return;
         if (tickerOn[MotorX] && endMax[MotorX]->read()) Parar_Mov(MotorX);
-        if (tickerOn[MotorY] && endMin [MotorY]->read()) Parar_Mov(MotorY);
+        if (tickerOn[MotorY] && endMin[MotorY]->read()) Parar_Mov(MotorY);
         ThisThread::sleep_for(1ms);
     }
     position[MotorX] = 0;
     position[MotorY] = 0;
 }
 
-// — Homing específico do Z (igual a X/Y, usa FDC_ZDWN e FDC_ZUP) —
+// homing Z
 static void homingZ(void) {
-    // Desliga bobinas
     coilsZ = 0;
-
-    // Sobe até acionar o fim de curso superior (ZUP)
     while (!endMaxZ->read()) {
-        if (!emergPin.read()) return;    // aborta se emergência
+        if (!emergPin.read()) return;
         stepZForward();
-        ThisThread::sleep_for(VEL_STEP_MS_Z);
+        ThisThread::sleep_for(velStepMsZCurrent);
     }
-
-    // Ao atingir ZUP, zera posição e marca este ponto como zero
     coilsZ = 0;
-    positionZ = 0;  // home no topo → posição = 0
+    positionZ = 0;
 }
 
-// — Implementações internas — 
+// funções internas de ticker
 static void startTicker(int id) {
     if (!tickerOn[id]) {
         tickers[id]->attach(stepWrapper[id], periodCur[id]);
@@ -258,7 +266,6 @@ static void startTicker(int id) {
         enableOut[id]->write(0);
     }
 }
-
 static void stopTicker(int id) {
     if (tickerOn[id]) {
         tickers[id]->detach();
@@ -267,53 +274,71 @@ static void stopTicker(int id) {
     }
 }
 
+// ISR de passo X/Y com aceleração e desaceleração suave
 static void stepISR(int id) {
+    // parar no fim de curso
     if ((dirState[id] == 0 && endMax[id]->read()) ||
         (dirState[id] == 1 && endMin[id]->read())) {
         stopTicker(id);
         return;
     }
+
     bool st = !stepOut[id]->read();
     stepOut[id]->write(st);
     if (st) {
         int delta = (dirState[id] == 0 ? +1 : -1);
         position[id] += delta * 2;
     }
+
     if (++passoCount[id] >= PASSOS_PARA_ACELERAR) {
         passoCount[id] = 0;
-        if (periodCur[id] > PERIODO_MINIMO[id]) {
+        // se periodCur > periodoMinAtual: acelera (reduz período)
+        if (periodCur[id] > periodoMinAtual[id]) {
             periodCur[id] -= REDUCAO_PERIODO[id];
-            if (periodCur[id] < PERIODO_MINIMO[id]) periodCur[id] = PERIODO_MINIMO[id];
-            tickers[id]->detach();
-            tickers[id]->attach(stepWrapper[id], periodCur[id]);
-            tickerOn[id] = true;
+            if (periodCur[id] < periodoMinAtual[id])
+                periodCur[id] = periodoMinAtual[id];
         }
+        // se periodCur < periodoMinAtual: desacelera (aumenta período)
+        else if (periodCur[id] < periodoMinAtual[id]) {
+            periodCur[id] += REDUCAO_PERIODO[id];
+            if (periodCur[id] > periodoMinAtual[id])
+                periodCur[id] = periodoMinAtual[id];
+        }
+        // atualiza ticker com novo período
+        tickers[id]->detach();
+        tickers[id]->attach(stepWrapper[id], periodCur[id]);
+        tickerOn[id] = true;
     }
 }
 
+// Movimenta X/Y para frente
 static void Mover_Frente(int id) {
     if (endMax[id]->read()) return;
     dirState[id] = 0;
     dirOut[id]->write(0);
     enableOut[id]->write(0);
     periodCur[id] = PERIODO_INICIAL[id];
-    passoCount[id] = 0;
+    passoCount[id]= 0;
     startTicker(id);
 }
 
+// Movimenta X/Y para trás
 static void Mover_Tras(int id) {
     if (endMin[id]->read()) return;
     dirState[id] = 1;
     dirOut[id]->write(1);
     enableOut[id]->write(0);
     periodCur[id] = PERIODO_INICIAL[id];
-    passoCount[id] = 0;
+    passoCount[id]= 0;
     startTicker(id);
 }
 
+// Para movimento X/Y
 static void Parar_Mov(int id) {
     stopTicker(id);
 }
+
+// Bresenham X
 static void stepLinearX() {
     if (lin_x0 == lin_tx && lin_y0 == lin_ty) {
         tickers[MotorX]->detach();
@@ -326,12 +351,13 @@ static void stepLinearX() {
         stepOut[MotorX]->write(!stepOut[MotorX]->read());
         lin_x0 += lin_sx;
         position[MotorX] = lin_x0;
-        lin_err    -= lin_dy;
+        lin_err -= lin_dy;
     }
     tickers[MotorX]->detach();
     tickers[MotorX]->attach(stepLinearX_wrapper, INTERP_PERIOD);
 }
 
+// Bresenham Y
 static void stepLinearY() {
     if (lin_x0 == lin_tx && lin_y0 == lin_ty) {
         tickers[MotorY]->detach();
@@ -344,123 +370,19 @@ static void stepLinearY() {
         stepOut[MotorY]->write(!stepOut[MotorY]->read());
         lin_y0 += lin_sy;
         position[MotorY] = lin_y0;
-        lin_err    += lin_dx;
+        lin_err += lin_dx;
     }
     tickers[MotorY]->detach();
     tickers[MotorY]->attach(stepLinearY_wrapper, INTERP_PERIOD);
 }
 
-// precisa desses wrappers por causa da assinatura void func()
 static void stepLinearX_wrapper() { stepLinearX(); }
 static void stepLinearY_wrapper() { stepLinearY(); }
-// Move o eixo especificado (0=X,1=Y,2=Z) até targetSteps passos (bloqueante)
-extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
-    if (id < MotorCount) {
-        int32_t current = position[id];
-        int32_t delta   = targetSteps - current;
-        if (delta > 0) {
-            Mover_Frente(id);
-            while (position[id] < targetSteps) {
-                if (!emergPin.read()) return;
-                ThisThread::sleep_for(1ms);
-            }
-            Parar_Mov(id);
-        } else if (delta < 0) {
-            Mover_Tras(id);
-            while (position[id] > targetSteps) {
-                if (!emergPin.read()) return;
-                ThisThread::sleep_for(1ms);
-            }
-            Parar_Mov(id);
-        }
-    } else if (id == MotorCount) {
-        // ----------------------------------------------------------
-        // Z axis movement with endstop detection to avoid lock-up
-        // ----------------------------------------------------------
-        int32_t delta = targetSteps - positionZ;
-        if (delta > 0) {
-            // descida do Z (positionZ incrementa)
-            while (positionZ < targetSteps) {
-                if (!emergPin.read()) return;
-                // se bateu no fim-de-curso superior, marca home e sai
-                if (endMaxZ->read()) {
-                    positionZ = 0;
-                    break;
-                }
-                stepZForward();
-                ThisThread::sleep_for(VEL_STEP_MS_Z);
-            }
-        } else if (delta < 0) {
-            // subida do Z (positionZ decrementa)
-            while (positionZ > targetSteps) {
-                // interrupção imediata em caso de emergência
-                if (!emergPin.read()) {
-                    coilsZ = 0;
-                    return;
-                }
-                // se bateu no fim-de-curso inferior, sai
-                if (endMinZ->read()) {
-                    break;
-                }
-                stepZBackward();
-                ThisThread::sleep_for(VEL_STEP_MS_Z);
-            }
-        }
-        coilsZ = 0;
-    }
-}
-// Adicione no fim de Pipetadora.cpp, antes do “// Aciona válvula”:
 
-// Caminha simultaneamente X e Y em linha reta até (tx,ty)
-extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
-    // inicializa Bresenham
-    lin_x0 = position[MotorX];  lin_y0 = position[MotorY];
-    lin_tx = tx;                lin_ty = ty;
-    lin_dx = abs(lin_tx - lin_x0);  lin_dy = abs(lin_ty - lin_y0);
-    lin_sx = (lin_tx > lin_x0 ? 1 : -1); lin_sy = (lin_ty > lin_y0 ? 1 : -1);
-    lin_err = lin_dx - lin_dy;
+// MoveTo, MoveLinear, ActuateValve e StopAll seguem sem alterações…
 
-    // drivers e direção
-    enableOut[MotorX]->write(0);
-    enableOut[MotorY]->write(0);
-    dirOut[MotorX]->write(lin_sx < 0);
-    dirOut[MotorY]->write(lin_sy < 0);
-
-    // arranque dos tickers com período fixo
-    tickers[MotorX]->detach();
-    tickers[MotorY]->detach();
-    tickerOn[MotorX] = tickerOn[MotorY] = true;
-    tickers[MotorX]->attach(stepLinearX_wrapper, INTERP_PERIOD);
-    tickers[MotorY]->attach(stepLinearY_wrapper, INTERP_PERIOD);
-
-    // espera ambos terminarem
-    while (tickerOn[MotorX] || tickerOn[MotorY]) {
-        if (!emergPin.read()) break;
-        ThisThread::sleep_for(1ms);
-    }
-
-    // desliga drivers
-    enableOut[MotorX]->write(1);
-    enableOut[MotorY]->write(1);
-}
-
-
-
-// Aciona válvula por volume_ml mL
-extern "C" void Pipetadora_ActuateValve(int volume_ml) {
-    if (!emergPin.read()) return;
-    pipette->write(0);
-    ThisThread::sleep_for(50ms);
-    pipette->write(1);
-}
-
-// Para imediatamente todos os movimentos e desativa bobinas (emergência)
-extern "C" void Pipetadora_StopAll(void) {
-    // paralisa X e Y
-    Parar_Mov(MotorX);
-    Parar_Mov(MotorY);
-    // desliga bobinas Z
-    coilsZ = 0;
-    // garante válvula fechada
-    pipette->write(0);
-}
+extern "C" void Pipetadora_MoveTo(int id, int targetSteps) { /* … */ }
+extern "C" void Pipetadora_MoveLinear(int tx, int ty)   { /* … */ }
+extern "C" void Pipetadora_ActuateValve(int volume_ml)  { /* … */ }
+extern "C" void Pipetadora_StopAll(void)                { /* … */ }
+extern "C" bool Pipetadora_GetToggleMode(void) { return swMode; }

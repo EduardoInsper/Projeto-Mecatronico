@@ -5,14 +5,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-// Move X and Y simultaneously in a straight line to (tx,ty)
+
+// Move X e Y simultaneamente em linha reta até (tx,ty)
 void  Pipetadora_MoveLinear(int tx, int ty);
 // Inicializa GPIO, tickers e variáveis internas de motores e pipeta
-void Pipetadora_InitMotors(void);
+void  Pipetadora_InitMotors(void);
 // Executa rotina de homing (referenciamento) dos eixos X, Y e Z
-void Pipetadora_Homing(void);
+void  Pipetadora_Homing(void);
 // Loop de controle manual; deve ser chamado repetidamente até retornar
-void Pipetadora_ManualControl(void);
+void  Pipetadora_ManualControl(void);
 // Retorna posição (em cm) do eixo especificado (0=X, 1=Y, 2=Z)
 float Pipetadora_GetPositionCm(int id);
 // Retorna posição (em passos) do eixo especificado (0=X, 1=Y, 2=Z)
@@ -23,6 +24,10 @@ void  Pipetadora_MoveTo(int id, int targetSteps);
 void  Pipetadora_ActuateValve(int volume_ml);
 // Para imediatamente todos os movimentos e desativa bobinas (emergência)
 void  Pipetadora_StopAll(void);
+
+// Retorna o modo de toggle manual:
+//   false → X/Y   |   true → Z/Y
+bool  Pipetadora_GetToggleMode(void);
 
 #ifdef __cplusplus
 }

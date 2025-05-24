@@ -22,6 +22,12 @@
 #define BTN_YDWN  PD_2 
 #define SWITCH_PIN PC_3
 
+// Chave seletora de velocidade
+
+#define BTN_VELO1 PA_0
+#define BTN_VELO2 PA_1
+#define BTN_VELO3 PA_4
+
 //======================================================================
 // Botões de controle e emergência
 //======================================================================
