@@ -23,8 +23,8 @@ static int zSeqIndex = 0;               // idx para sequência de bobinas Z
 
 // Velocidades Z com VELO1/2/3 (milissegundos)
 static constexpr milliseconds VEL_STEP_MS_Z       = 2ms;  // alta
-static constexpr milliseconds VEL_STEP_MS_Z_MEDIO = 4ms;  // média
-static constexpr milliseconds VEL_STEP_MS_Z_BAIXO  = 6ms;  // baixa
+static constexpr milliseconds VEL_STEP_MS_Z_MEDIO = 3ms;  // média
+static constexpr milliseconds VEL_STEP_MS_Z_BAIXO  = 4ms;  // baixa
 static milliseconds velStepMsZCurrent = VEL_STEP_MS_Z;
 
 // ------------------------------------------------------------------
