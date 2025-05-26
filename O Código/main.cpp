@@ -126,13 +126,20 @@ int main() {
         // 1) Emergência
         if (emergActive) {
             Pipetadora_StopAll();
-            lcd.cls(); lcd.printf("!!! EMERGÊNCIA !!!");
+            lcd.cls(); lcd.printf("!!! EMERGENCIA !!!");
+            // espera até o botão de emergência ser solto
             while (emergActive) ThisThread::sleep_for(50ms);
+            // solicita confirmação de ENTER para voltar ao menu principal
+            lcd.cls(); lcd.printf("Aperte ENTER");
+            enterFlag = false;                          // zera flag de ENTER
+            while (!enterFlag) ThisThread::sleep_for(50ms);
+            enterFlag = false;                          // consome o ENTER
             clearMemory();
             cursor = 0; inSubmenu = false;
             drawMainMenu();
             continue;
         }
+
 
         // 2) Navegação
         if (!inSubmenu) {
@@ -180,7 +187,7 @@ int main() {
 
                     case 2:  // Submenu Pipetadora
                         if (!homed) {
-                            lcd.cls(); lcd.printf("Erro: Faça homing");
+                            lcd.cls(); lcd.printf("Erro: Faca homing");
                             ThisThread::sleep_for(800ms);
                             drawMainMenu();
                         } else {
