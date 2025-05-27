@@ -28,9 +28,9 @@ static constexpr float PASSO_FUSO_Z = 1.0f;
 static int zSeqIndex = 0;          // índice de sequência de bobinas Z
 
 // velocidades Z (milissegundos)
-static constexpr milliseconds VEL_STEP_MS_Z_HIGH   = 2ms;
-static constexpr milliseconds VEL_STEP_MS_Z_MEDIUM = 3ms;
-static constexpr milliseconds VEL_STEP_MS_Z_LOW    = 4ms;
+static constexpr milliseconds VEL_STEP_MS_Z_HIGH   = 3ms;
+static constexpr milliseconds VEL_STEP_MS_Z_MEDIUM = 4ms;
+static constexpr milliseconds VEL_STEP_MS_Z_LOW    = 5ms;
 static milliseconds velStepMsZCurrent = VEL_STEP_MS_Z_HIGH;
 
 // ------------------------------------------------------------------
