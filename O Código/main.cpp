@@ -4,7 +4,7 @@
 #include "TextLCD.h"
 #include "pinos.h"
 #include "Pipetadora.h"
-#define MAX_POINTS 9
+#define MAX_POINTS 9 //Definição de pontos maximos para solta
 
 DigitalIn switchSelectDisp(SWITCH_PIN, PullDown);
 
@@ -33,14 +33,14 @@ static Ponto pontosSolta[MAX_POINTS];
 static int  volumeSolta[MAX_POINTS] = {0};
 // -----------------------------------------
 
-static bool homed = false;
-static int  cursor    = 0;
-static bool inSubmenu = false;
-static bool upFlag, downFlag, enterFlag, backFlag;
-static int  numSolta  = 0;
-static volatile bool emergActive = false;
+static bool homed = false; //Checagem do referenciamento
+static int  cursor    = 0; //Posição do cursor do menu
+static bool inSubmenu = false; //Checagem do menu secundario
+static bool upFlag, downFlag, enterFlag, backFlag; //Flags de botões
+static int  numSolta  = 0; //Contagem de quantos pontos de solta estão setados
+static volatile bool emergActive = false; //Checa emergencia
 
-// Menu definitions
+// Definições do menu e submenu
 #define MAIN_COUNT 3
 #define SUB_COUNT  4
 #define SUB_VISIBLE  3
@@ -110,6 +110,7 @@ void drawSubMenu() {
     }
 }
 
+//Inicialização da maquina
 int main() {
     Pipetadora_InitMotors();
     debounceTimer.start();
@@ -122,6 +123,7 @@ int main() {
     drawMainMenuAnim();
     drawMainMenu();
 
+    //Loop principal
     while (true) {
         // 1) Emergência
         if (emergActive) {
@@ -157,7 +159,7 @@ int main() {
             enterFlag = false;
             if (!inSubmenu) {
                 switch (cursor) {
-                    case 0: { // Referenciamento sempre em velocidade máxima (PERIODO_MINIMO interno)
+                    case 0: { // Referenciamento sempre em velocidade máxima
                         lcd.cls(); lcd.printf("Referenciando...");
                         Pipetadora_Homing();
                         homed = true;
@@ -187,7 +189,7 @@ int main() {
 
                     case 2:  // Submenu Pipetadora
                         if (!homed) {
-                            lcd.cls(); lcd.printf("Erro: Faca homing");
+                            lcd.cls(); lcd.printf("Erro: Faca homing"); //Caso n tenha referenciado, mostra erro
                             ThisThread::sleep_for(800ms);
                             drawMainMenu();
                         } else {
@@ -214,6 +216,7 @@ int main() {
                             }
                         }
                         if (enterFlag) {
+                            //Salva coleta
                             pontosColeta.pos[0] = Pipetadora_GetPositionSteps(0);
                             pontosColeta.pos[1] = Pipetadora_GetPositionSteps(1);
                             pontosColeta.pos[2] = Pipetadora_GetPositionSteps(2);
@@ -230,12 +233,14 @@ int main() {
                         lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta);
                         bool doneQtd = false;
                         while (!doneQtd && !emergActive) {
+                            //Escolhe quantidade de pontos de solta
                             if (upFlag   && numSolta < MAX_POINTS) { numSolta++; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); upFlag=false; }
                             if (downFlag && numSolta > 0)           { numSolta--; lcd.cls(); lcd.printf("Qtd Solta:%d", numSolta); downFlag=false; }
                             if (enterFlag) { enterFlag=false; doneQtd=true; }
                             if (backFlag)  { backFlag=false; doneQtd=true; numSolta=0; }
                             ThisThread::sleep_for(1ms);
                         }
+                        //Para cada ponto de solta salva ml e posição
                         for (int i = 0; i < numSolta; ++i) {
                             lcd.cls(); lcd.printf("Mov PtoS %d", i+1);
                             bool lastSw = Pipetadora_GetToggleMode();
@@ -286,6 +291,7 @@ int main() {
                             drawSubMenu();
                             break;
                         }
+                        //Começa a pipetagem automatica
                         lcd.cls(); lcd.printf("Iniciando...");
                         ThisThread::sleep_for(300ms);
                         Pipetadora_MoveTo(2, 0);

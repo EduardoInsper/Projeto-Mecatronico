@@ -131,11 +131,13 @@ void Pipetadora_InitMotors(void) {
     pipette->write(0);
 }
 
+//Chama ambas as funções de referenciamento de eixo
 void Pipetadora_Homing(void) {
     homingZ();
     HomingXY();
 }
 
+//Aciona motor de passo no sentido horario
 static void stepZForward() {
     if (endMaxZ->read()) { coilsZ = 0; return; }
     coilsZ = SEQ_Z[zSeqIndex];
@@ -143,6 +145,7 @@ static void stepZForward() {
     positionZ++;
 }
 
+//Aciona motor de passo no sentido antihorario
 static void stepZBackward() {
     if (endMinZ->read()) { coilsZ = 0; return; }
     zSeqIndex = (zSeqIndex + 3) % 4;
@@ -150,6 +153,7 @@ static void stepZBackward() {
     positionZ--;
 }
 
+//Definições e funções do jog manual da pipetadora
 void Pipetadora_ManualControl(void) {
     // 1) Toggle Y↔Z
     bool raw = switchSelect->read();
@@ -205,15 +209,18 @@ void Pipetadora_ManualControl(void) {
     ThisThread::sleep_for(velStepMsZCurrent);
 }
 
+//Retorna o valor do modo de XY ou ZY
 extern "C" bool Pipetadora_GetToggleMode(void) {
     return swMode;
 }
 
+//calcula a conversão de passo pra cm (não implementado)
 float Pipetadora_GetPositionCm(int id) {
     if (id < MotorCount) return float(position[id] * PASSO_FUSO[id] / 400.0f);
     return float(positionZ * PASSO_FUSO_Z / 400.0f);
 }
 
+//Retorna posição absoluta em passos da pipetadora (para X e Y) 
 int Pipetadora_GetPositionSteps(int id) {
     return (id < MotorCount ? position[id] : positionZ);
 }
@@ -245,7 +252,7 @@ static void homingZ(void) {
     positionZ = 0;
 }
 
-// — Implementações internas —
+//Aciona ticked do motor de passo
 static void startTicker(int id) {
     if (!tickerOn[id]) {
         tickers[id]->attach(stepWrapper[id], periodCur[id]);
@@ -254,6 +261,7 @@ static void startTicker(int id) {
     }
 }
 
+//Desativa ticked do motor de passo
 static void stopTicker(int id) {
     if (tickerOn[id]) {
         tickers[id]->detach();
@@ -262,6 +270,7 @@ static void stopTicker(int id) {
     }
 }
 
+//ISR dos steps para os motores X e Y
 static void stepISR(int id) {
     // parar no fim de curso
     if ((dirState[id]==0 && endMax[id]->read()) ||
@@ -299,6 +308,7 @@ static void stepISR(int id) {
     }
 }
 
+//Aciona motor de passo no sentido horario (X e Y)
 static void Mover_Frente(int id) {
     if (endMax[id]->read()) return;
     dirState[id]   = 0;
@@ -308,7 +318,7 @@ static void Mover_Frente(int id) {
     passoCount[id] = 0;
     startTicker(id);
 }
-
+//Aciona motor de passo no sentido antihorario (X e Y)
 static void Mover_Tras(int id) {
     if (endMin[id]->read()) return;
     dirState[id]   = 1;
@@ -319,10 +329,12 @@ static void Mover_Tras(int id) {
     startTicker(id);
 }
 
+//Para movimentação de X e Y
 static void Parar_Mov(int id) {
     stopTicker(id);
 }
 
+//Interpolação de Bresenham para a pipetagem automatica
 extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
     lin_x0 = position[MotorX]; lin_y0 = position[MotorY];
     lin_tx = tx;              lin_ty = ty;
@@ -352,6 +364,7 @@ extern "C" void Pipetadora_MoveLinear(int tx, int ty) {
     enableOut[MotorY]->write(1);
 }
 
+//Definição do step em Bresenham para X 
 static void stepLinearX() {
     if (lin_x0 == lin_tx && lin_y0 == lin_ty) {
         tickers[MotorX]->detach();
@@ -370,6 +383,7 @@ static void stepLinearX() {
     tickers[MotorX]->attach(stepLinearX_wrapper, INTERP_PERIOD);
 }
 
+//Definição do step em Bresenham para Y
 static void stepLinearY() {
     if (lin_x0 == lin_tx && lin_y0 == lin_ty) {
         tickers[MotorY]->detach();
@@ -391,6 +405,7 @@ static void stepLinearY() {
 static void stepLinearX_wrapper() { stepLinearX(); }
 static void stepLinearY_wrapper() { stepLinearY(); }
 
+//Move ambos os eixos da pipetadora para a posição dos pontos
 extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
     if (id < MotorCount) {
         int32_t current = position[id];
@@ -431,6 +446,7 @@ extern "C" void Pipetadora_MoveTo(int id, int targetSteps) {
     }
 }
 
+//Ativação da pipeta
 extern "C" void Pipetadora_ActuateValve(int volume_ml) {
     if (!emergPin.read()) return;
     pipette->write(0);
@@ -438,6 +454,7 @@ extern "C" void Pipetadora_ActuateValve(int volume_ml) {
     pipette->write(1);
 }
 
+//Para todos os motores
 extern "C" void Pipetadora_StopAll(void) {
     Parar_Mov(MotorX);
     Parar_Mov(MotorY);
